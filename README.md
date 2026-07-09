@@ -47,6 +47,24 @@ python -m rawmem capture --local --source manual --type note --text "First rawme
 python -m rawmem tail --local
 ```
 
+## One-Time Setup
+
+For daily use, start with the broad local setup:
+
+```powershell
+python -m rawmem setup --all
+```
+
+This creates a project-local `.rawmem/` store, config file, helper scripts,
+browser bookmarklet text, and repo-local Git hooks. It does not edit your global
+PowerShell profile unless you explicitly ask:
+
+```powershell
+python -m rawmem setup --install-powershell-profile --yes
+```
+
+See [docs/SETUP.md](docs/SETUP.md) for the full setup matrix.
+
 ## Commands
 
 Capture a manual event:
@@ -61,6 +79,18 @@ Capture stdin:
 "The button should be 2px larger." | python -m rawmem capture --local --source clipboard --type ui_feedback --stdin
 ```
 
+Ingest generic adapter JSON from any tool:
+
+```powershell
+python -m rawmem ingest --local --file event.json
+```
+
+Capture clipboard or selected text:
+
+```powershell
+"Selected page text" | python -m rawmem clip --local --stdin --url "https://example.com"
+```
+
 Wrap a command and record its result:
 
 ```powershell
@@ -73,11 +103,37 @@ Record a git snapshot:
 python -m rawmem git-snapshot --local --project rawmem
 ```
 
+Poll file changes:
+
+```powershell
+python -m rawmem watch --local --once
+python -m rawmem watch --local --interval 5
+```
+
+Start a localhost browser/tool capture endpoint:
+
+```powershell
+python -m rawmem serve --local
+python -m rawmem bookmarklet
+```
+
 Show recent events:
 
 ```powershell
 python -m rawmem tail --local --limit 10
 ```
+
+## Current Coverage
+
+| Surface | Command | What lands in the ledger |
+| --- | --- | --- |
+| Manual notes | `capture` | Raw text, tags, artifacts, custom fields |
+| Any adapter/tool | `ingest` | JSON event payloads from external software |
+| Clipboard/selection | `clip` | Text plus optional URL/title |
+| Shell commands | `run` or PowerShell snippet | Command, cwd, exit code, stdout/stderr summary |
+| Git lifecycle | `setup --all` hooks | commit/checkout/merge/rewrite/push snapshots |
+| File changes | `watch` | batched created/modified/deleted paths |
+| Browser pages | `serve` + bookmarklet | title, URL, selected text |
 
 ## Storage
 
@@ -135,8 +191,9 @@ visible.
 piece is the ledger. Capture adapters can be small and optional:
 
 - CLI wrappers for Codex, Claude Code, shell commands, and build scripts.
+- Generic JSON ingest for tools like WorkBuddy, QWork, or custom scripts.
 - Git/file watchers for tools that ultimately change a repo.
-- Browser extensions for web AI chats, issue pages, docs, and web clips.
+- Localhost browser capture, bookmarklets, and later browser extensions for web AI chats, issue pages, docs, and web clips.
 - App-specific adapters when a tool exposes logs, exports, plugins, or APIs.
 - Manual hotkey/clipboard capture as a low-friction fallback.
 

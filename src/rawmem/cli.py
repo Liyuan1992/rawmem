@@ -20,6 +20,9 @@ from .ledger import (
     resolve_ledger_path,
     summarize,
 )
+from .setup_tools import default_powershell_profile, install_powershell_profile, setup_project
+from .watcher import watch_loop, watch_once
+from .web_capture import build_bookmarklet, event_from_adapter_payload, serve_capture
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,9 +47,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
     add_init_parser(sub)
+    add_setup_parser(sub)
     add_capture_parser(sub)
+    add_ingest_parser(sub)
+    add_clip_parser(sub)
     add_run_parser(sub)
     add_git_snapshot_parser(sub)
+    add_watch_parser(sub)
+    add_serve_parser(sub)
+    add_bookmarklet_parser(sub)
     add_tail_parser(sub)
     add_path_parser(sub)
     return parser
@@ -61,6 +70,22 @@ def add_init_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     parser = sub.add_parser("init", help="Create a local .rawmem store.")
     parser.add_argument("--local", action="store_true", help="Accepted for symmetry; init always creates .rawmem.")
     parser.set_defaults(func=cmd_init)
+
+
+def add_setup_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("setup", help="One-time local setup for broader background capture.")
+    parser.add_argument("--project-root", default=".", help="Project root to configure.")
+    parser.add_argument("--all", action="store_true", help="Enable config, scripts, and git hooks.")
+    parser.add_argument("--install-git-hooks", action="store_true", help="Install repo-local git hooks.")
+    parser.add_argument(
+        "--install-powershell-profile",
+        action="store_true",
+        help="Install the shell capture snippet into the current user's PowerShell profile.",
+    )
+    parser.add_argument("--profile-path", help="PowerShell profile path. Defaults to CurrentUser profile.")
+    parser.add_argument("--force", action="store_true", help="Overwrite generated config/scripts blocks.")
+    parser.add_argument("--yes", action="store_true", help="Confirm user-profile writes for non-interactive setup.")
+    parser.set_defaults(func=cmd_setup)
 
 
 def add_capture_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -83,6 +108,30 @@ def add_capture_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
         help="Mark the event as not requiring review before derived memory use.",
     )
     parser.set_defaults(func=cmd_capture)
+
+
+def add_ingest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("ingest", help="Append one or more adapter JSON events.")
+    add_common_store_args(parser)
+    parser.add_argument("--file", help="JSON file to ingest. Use stdin when omitted or with --stdin.")
+    parser.add_argument("--stdin", action="store_true", help="Read JSON from stdin.")
+    parser.add_argument("--cwd", help="Working directory to store in the event.")
+    parser.set_defaults(func=cmd_ingest)
+
+
+def add_clip_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("clip", help="Capture clipboard/stdin text as a raw event.")
+    add_common_store_args(parser)
+    parser.add_argument("--source", default="clipboard", help="Event source.")
+    parser.add_argument("--type", dest="event_type", default="clipboard_clip", help="Event type.")
+    parser.add_argument("--project", help="Project name.")
+    parser.add_argument("--cwd", help="Working directory to store in the event.")
+    parser.add_argument("--text", help="Text to capture instead of reading stdin/clipboard.")
+    parser.add_argument("--stdin", action="store_true", help="Read text from stdin.")
+    parser.add_argument("--url", help="Optional source URL.")
+    parser.add_argument("--title", help="Optional source title.")
+    parser.add_argument("--tag", action="append", default=[], help="Tag. Can be repeated.")
+    parser.set_defaults(func=cmd_clip)
 
 
 def add_run_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -109,6 +158,33 @@ def add_git_snapshot_parser(sub: argparse._SubParsersAction[argparse.ArgumentPar
     parser.set_defaults(func=cmd_git_snapshot)
 
 
+def add_watch_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("watch", help="Poll a project tree and capture file-change batches.")
+    add_common_store_args(parser)
+    parser.add_argument("--root", default=".", help="Root directory to watch.")
+    parser.add_argument("--project", help="Project name.")
+    parser.add_argument("--interval", type=float, default=5.0, help="Polling interval in seconds.")
+    parser.add_argument("--once", action="store_true", help="Scan once and exit.")
+    parser.add_argument("--state", help="Watch state JSON path.")
+    parser.add_argument("--ignore", action="append", default=[], help="Extra ignore glob. Can be repeated.")
+    parser.set_defaults(func=cmd_watch)
+
+
+def add_serve_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("serve", help="Run a localhost capture endpoint for browser/tool adapters.")
+    add_common_store_args(parser)
+    parser.add_argument("--host", default="127.0.0.1", help="Listen host.")
+    parser.add_argument("--port", type=int, default=8765, help="Listen port.")
+    parser.add_argument("--cwd", help="Working directory to store in events.")
+    parser.set_defaults(func=cmd_serve)
+
+
+def add_bookmarklet_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("bookmarklet", help="Print a browser bookmarklet for selected-text capture.")
+    parser.add_argument("--endpoint", default="http://127.0.0.1:8765/capture", help="Capture endpoint.")
+    parser.set_defaults(func=cmd_bookmarklet)
+
+
 def add_tail_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("tail", help="Show recent events.")
     add_common_store_args(parser)
@@ -126,6 +202,26 @@ def add_path_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 def cmd_init(args: argparse.Namespace) -> int:
     ledger_path = init_local_store()
     print(str(ledger_path))
+    return 0
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    root = Path(args.project_root).resolve()
+    install_hooks = args.install_git_hooks or args.all
+    actions = setup_project(
+        root,
+        install_git_hooks=install_hooks,
+        write_scripts=True,
+        force=args.force,
+    )
+    if args.install_powershell_profile:
+        if not args.yes:
+            raise ValueError("--install-powershell-profile modifies a user profile; pass --yes to confirm")
+        profile = Path(args.profile_path).expanduser() if args.profile_path else default_powershell_profile()
+        installed = install_powershell_profile(profile, force=args.force)
+        actions.append(f"powershell_profile={installed}")
+    for action in actions:
+        print(action)
     return 0
 
 
@@ -150,6 +246,56 @@ def cmd_capture(args: argparse.Namespace) -> int:
         payload=payload,
         privacy_scope=args.privacy,
         review_required=not args.review_not_required,
+    )
+    saved = append_event(ledger_path, event)
+    print_result(saved, ledger_path)
+    return 0
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    cwd = Path(args.cwd).resolve() if args.cwd else Path.cwd()
+    ledger_path = resolve_ledger_path(args.ledger, local=args.local, cwd=cwd)
+    if args.stdin or not args.file:
+        raw = sys.stdin.read()
+    else:
+        raw = Path(args.file).read_text(encoding="utf-8")
+    payload = json.loads(raw)
+    payloads = payload if isinstance(payload, list) else [payload]
+    count = 0
+    last_saved: dict[str, Any] | None = None
+    for item in payloads:
+        event = event_from_adapter_payload(item, cwd=cwd)
+        last_saved = append_event(ledger_path, event)
+        count += 1
+    if last_saved:
+        print(f"{count} event(s) -> {ledger_path}; last={last_saved['event_id']}")
+    else:
+        print(f"0 event(s) -> {ledger_path}")
+    return 0
+
+
+def cmd_clip(args: argparse.Namespace) -> int:
+    cwd = Path(args.cwd).resolve() if args.cwd else Path.cwd()
+    ledger_path = resolve_ledger_path(args.ledger, local=args.local, cwd=cwd)
+    text = args.text
+    if text is None and (args.stdin or not sys.stdin.isatty()):
+        text = sys.stdin.read()
+    if text is None:
+        text = read_clipboard()
+    payload = {}
+    if args.url:
+        payload["url"] = args.url
+    if args.title:
+        payload["title"] = args.title
+    event = build_event(
+        source=args.source,
+        event_type=args.event_type,
+        project=args.project,
+        cwd=cwd,
+        summary=args.title or summarize(text),
+        raw_text=text or "",
+        tags=args.tag,
+        payload=payload,
     )
     saved = append_event(ledger_path, event)
     print_result(saved, ledger_path)
@@ -267,6 +413,50 @@ def cmd_git_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_watch(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    if args.once:
+        saved = watch_once(
+            root=root,
+            ledger_path=args.ledger,
+            local=args.local,
+            project=args.project,
+            state_path=args.state,
+            ignore_globs=None if not args.ignore else args.ignore,
+        )
+        if saved:
+            print_result(saved, resolve_ledger_path(args.ledger, local=args.local, cwd=root))
+        else:
+            print("no changes")
+        return 0
+    watch_loop(
+        root=root,
+        ledger_path=args.ledger,
+        local=args.local,
+        project=args.project,
+        interval_seconds=args.interval,
+        state_path=args.state,
+        ignore_globs=None if not args.ignore else args.ignore,
+    )
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    serve_capture(
+        host=args.host,
+        port=args.port,
+        ledger_path=args.ledger,
+        local=args.local,
+        cwd=args.cwd,
+    )
+    return 0
+
+
+def cmd_bookmarklet(args: argparse.Namespace) -> int:
+    print(build_bookmarklet(args.endpoint))
+    return 0
+
+
 def cmd_tail(args: argparse.Namespace) -> int:
     ledger_path = resolve_ledger_path(args.ledger, local=args.local)
     events = read_events(ledger_path)
@@ -315,6 +505,21 @@ def git(args: list[str], cwd: Path) -> str:
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
     return result.stdout
+
+
+def read_clipboard() -> str:
+    if sys.platform.startswith("win"):
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if result.returncode == 0:
+            return result.stdout
+    raise ValueError("No text provided and clipboard capture is not available on this platform")
 
 
 def git_optional(args: list[str], cwd: Path, *, default: str = "") -> str:
