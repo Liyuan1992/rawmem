@@ -4,10 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .ledger import resolve_ledger_path
+from .ledger import default_home, resolve_ledger_path
 
 
 CONFIG_SCHEMA = "rawmem.config.v1"
+GLOBAL_CONFIG_SCHEMA = "rawmem.config.v2"
 
 DEFAULT_IGNORE_GLOBS = [
     ".git/**",
@@ -67,6 +68,86 @@ def default_config(project_root: str | Path, *, local: bool = True) -> dict[str,
             "clipboard": {"enabled": True},
         },
     }
+
+
+def default_global_config() -> dict[str, Any]:
+    """Machine-wide daemon config stored at ~/.rawmem/config.json."""
+    return {
+        "schema": GLOBAL_CONFIG_SCHEMA,
+        "ledger": None,
+        "daemon": {
+            "cycle_seconds": 1.0,
+            "serve": {"enabled": True, "host": "127.0.0.1", "port": 8765},
+            "watch": {
+                "enabled": False,
+                "roots": [],
+                "interval_seconds": 120,
+                "ignore_globs": DEFAULT_IGNORE_GLOBS,
+            },
+            "tailers": {
+                "claude_code": {
+                    "enabled": True,
+                    "interval_seconds": 20,
+                    "include_assistant": True,
+                    "include_sidechain": False,
+                    "max_chars": 6000,
+                    "root": None,
+                },
+                "codex": {
+                    "enabled": True,
+                    "interval_seconds": 20,
+                    "include_assistant": True,
+                    "max_chars": 6000,
+                    "root": None,
+                },
+                "powershell_history": {
+                    "enabled": True,
+                    "interval_seconds": 15,
+                    "path": None,
+                    "batch_threshold": 20,
+                },
+                "clipboard": {
+                    "enabled": True,
+                    "interval_seconds": 4,
+                    "max_chars": 20000,
+                },
+            },
+        },
+    }
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def global_config_path() -> Path:
+    return default_home() / "config.json"
+
+
+def load_global_config(path: str | Path | None = None) -> dict[str, Any]:
+    """Defaults deep-merged with the user's ~/.rawmem/config.json when present."""
+    target = Path(path) if path else global_config_path()
+    defaults = default_global_config()
+    if not target.exists():
+        return defaults
+    loaded = load_config(target)
+    if not isinstance(loaded, dict):
+        return defaults
+    return deep_merge(defaults, loaded)
+
+
+def write_global_config(path: str | Path | None = None, *, force: bool = False) -> Path:
+    target = Path(path) if path else global_config_path()
+    if target.exists() and not force:
+        return target
+    save_config(target, default_global_config())
+    return target
 
 
 def config_path_for(project_root: str | Path) -> Path:

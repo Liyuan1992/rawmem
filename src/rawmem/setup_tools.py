@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Iterable
 
 from .config import DEFAULT_GIT_HOOKS, config_path_for, default_config, save_config
-from .ledger import init_local_store
+from .ledger import default_home, init_local_store
 from .web_capture import build_bookmarklet
 
 
@@ -89,6 +90,165 @@ def generate_git_hook_block(hook_name: str) -> str:
             "",
         ]
     )
+
+
+def generate_global_git_hook(hook_name: str) -> str:
+    """Global hook: snapshot to the global ledger, then chain to repo hooks."""
+    python_path = Path(sys.executable).as_posix()
+    src_path = Path(__file__).resolve().parents[1].as_posix()
+    return "\n".join(
+        [
+            "#!/bin/sh",
+            f"# rawmem global git hook: {hook_name}",
+            "if [ \"$RAWMEM_DISABLE\" = \"1\" ]; then rawmem_skip=1; else rawmem_skip=0; fi",
+            "if [ \"$rawmem_skip\" = \"0\" ]; then",
+            f"  PYTHONPATH='{src_path}'\"${{PYTHONPATH:+:$PYTHONPATH}}\" '{python_path}' -m rawmem git-snapshot"
+            f" --source git-hook --tag '{hook_name}' </dev/null >/dev/null 2>&1 || true",
+            "fi",
+            "repo_hooks=\"$(git rev-parse --git-path hooks 2>/dev/null)\"",
+            f"if [ -n \"$repo_hooks\" ] && [ -x \"$repo_hooks/{hook_name}\" ]; then",
+            f"  exec \"$repo_hooks/{hook_name}\" \"$@\"",
+            "fi",
+            "exit 0",
+            "",
+        ]
+    )
+
+
+def install_global_git_hooks(
+    hooks: Iterable[str] = DEFAULT_GIT_HOOKS,
+    *,
+    hooks_dir: str | Path | None = None,
+    configure_git: bool = True,
+    force: bool = False,
+) -> list[str]:
+    """Write hooks into ~/.rawmem/git-hooks and point core.hooksPath at it.
+
+    Existing repo-local hooks keep working: each global hook chains to the
+    repository's own .git/hooks/<name> when present. Repos that set a local
+    core.hooksPath (e.g. husky) override the global value and are unaffected.
+    """
+    target_dir = Path(hooks_dir) if hooks_dir else default_home() / "git-hooks"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    actions: list[str] = []
+    for hook_name in hooks:
+        hook_path = target_dir / hook_name
+        hook_path.write_text(generate_global_git_hook(hook_name), encoding="utf-8", newline="\n")
+        try:
+            hook_path.chmod(hook_path.stat().st_mode | 0o111)
+        except OSError:
+            pass
+        actions.append(f"global_git_hook={hook_path}")
+    if configure_git:
+        desired = target_dir.resolve().as_posix()
+        current = git_config_get_global("core.hooksPath")
+        if current and current != desired and not force:
+            raise ValueError(
+                f"core.hooksPath is already set to '{current}'; rerun with --force to replace it"
+            )
+        run_command(["git", "config", "--global", "core.hooksPath", desired])
+        actions.append(f"git_config_core.hooksPath={desired}")
+    return actions
+
+
+def uninstall_global_git_hooks() -> list[str]:
+    current = git_config_get_global("core.hooksPath")
+    expected = (default_home() / "git-hooks").resolve().as_posix()
+    if current != expected:
+        return [f"skipped: core.hooksPath is '{current or ''}', not '{expected}'"]
+    run_command(["git", "config", "--global", "--unset", "core.hooksPath"])
+    return ["git_config_core.hooksPath=unset"]
+
+
+def git_config_get_global(key: str) -> str | None:
+    result = subprocess.run(
+        ["git", "config", "--global", "--get", key],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def run_command(args: list[str]) -> str:
+    result = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"{' '.join(args)} failed")
+    return result.stdout
+
+
+STARTUP_TASK_NAME = "rawmem-daemon"
+
+
+def generate_daemon_launcher() -> str:
+    """Launcher with the package path baked in.
+
+    Scheduled tasks may start pythonw without the user site-packages on
+    sys.path (so `-m rawmem` fails with "No module named rawmem"); an
+    explicit sys.path entry makes startup independent of that environment.
+    """
+    package_parent = Path(__file__).resolve().parents[1]
+    return "\n".join(
+        [
+            "import sys",
+            "",
+            f"sys.path.insert(0, {str(package_parent)!r})",
+            "",
+            "from rawmem.cli import main",
+            "",
+            'sys.exit(main(["daemon"]))',
+            "",
+        ]
+    )
+
+
+def install_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
+    """Register the daemon to start at logon via a hidden pythonw process."""
+    if not sys.platform.startswith("win"):
+        raise ValueError("startup registration is currently Windows-only")
+    exe = Path(sys.executable)
+    pythonw = exe.with_name("pythonw.exe")
+    runner = pythonw if pythonw.exists() else exe
+    launcher = default_home() / "daemon-launcher.pyw"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(generate_daemon_launcher(), encoding="utf-8")
+    command = f'"{runner}" "{launcher}"'
+    run_command(
+        [
+            "schtasks",
+            "/Create",
+            "/F",
+            "/SC",
+            "ONLOGON",
+            "/TN",
+            task_name,
+            "/TR",
+            command,
+        ]
+    )
+    return f"startup_task={task_name} -> {command}"
+
+
+def uninstall_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
+    run_command(["schtasks", "/Delete", "/F", "/TN", task_name])
+    return f"startup_task_removed={task_name}"
+
+
+def start_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
+    run_command(["schtasks", "/Run", "/TN", task_name])
+    return f"startup_task_started={task_name}"
 
 
 def generate_powershell_profile_snippet() -> str:

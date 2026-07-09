@@ -27,113 +27,78 @@ patterns:
 
 Disk is cheap. Missing history is expensive.
 
-## Install For Development
+## Install
 
 ```powershell
 cd D:\Dev\Projects\rawmem
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e .
+python -m pip install --user -e .
 ```
 
-The runtime has no third-party dependencies.
-
-## Quick Start Without Installing
-
-```powershell
-cd D:\Dev\Projects\rawmem
-$env:PYTHONPATH = "src"
-python -m rawmem init --local
-python -m rawmem capture --local --source manual --type note --text "First rawmem event"
-python -m rawmem tail --local
-```
+The runtime has no third-party dependencies. Make sure the user Scripts
+directory (e.g. `%APPDATA%\Python\Python312\Scripts`) is on PATH so `rawmem`
+works from any directory.
 
 ## One-Time Setup
 
-For daily use, start with the broad local setup:
-
 ```powershell
-python -m rawmem setup --all
+rawmem setup --global                 # global config + git hooks for all repos
+rawmem setup --install-startup --yes  # run the daemon headless at every logon
+rawmem setup --start-daemon           # start it right now
 ```
 
-This creates a project-local `.rawmem/` store, config file, helper scripts,
-browser bookmarklet text, and repo-local Git hooks. It does not edit your global
-PowerShell profile unless you explicitly ask:
+After this the daemon passively tails Claude Code sessions, Codex sessions,
+PowerShell history, and the clipboard, watches configured directories, and
+serves the browser-capture endpoint — with zero per-event action from you.
+The guiding principle is **passive over self-report**: evidence is pulled
+from logs other tools already write, not pushed by agents remembering to
+report back.
 
-```powershell
-python -m rawmem setup --install-powershell-profile --yes
-```
-
-See [docs/SETUP.md](docs/SETUP.md) for the full setup matrix.
+See [docs/SETUP.md](docs/SETUP.md) for the full setup matrix and the
+browser extension.
 
 ## Commands
 
-Capture a manual event:
+Background capture (the primary path):
 
 ```powershell
-python -m rawmem capture --local --source codex --type task_note --project rawmem --text "User asked for a local-first raw evidence ledger."
+rawmem daemon              # run all background surfaces in one process
+rawmem daemon --status     # task counters, errors, last run times
+rawmem sync                # one manual tailer pass
+rawmem sync --backfill     # first run: also ingest existing history
 ```
 
-Capture stdin:
+Inspect the ledger:
 
 ```powershell
-"The button should be 2px larger." | python -m rawmem capture --local --source clipboard --type ui_feedback --stdin
+rawmem tail --limit 10
+rawmem tail --source claude-code --limit 5
+rawmem tail --project rawmem --type agent_user_turn --json
 ```
 
-Ingest generic adapter JSON from any tool:
+Manual and scripted capture:
 
 ```powershell
-python -m rawmem ingest --local --file event.json
-```
-
-Capture clipboard or selected text:
-
-```powershell
-"Selected page text" | python -m rawmem clip --local --stdin --url "https://example.com"
-```
-
-Wrap a command and record its result:
-
-```powershell
-python -m rawmem run --local --source terminal --project rawmem -- python --version
-```
-
-Record a git snapshot:
-
-```powershell
-python -m rawmem git-snapshot --local --project rawmem
-```
-
-Poll file changes:
-
-```powershell
-python -m rawmem watch --local --once
-python -m rawmem watch --local --interval 5
-```
-
-Start a localhost browser/tool capture endpoint:
-
-```powershell
-python -m rawmem serve --local
-python -m rawmem bookmarklet
-```
-
-Show recent events:
-
-```powershell
-python -m rawmem tail --local --limit 10
+rawmem capture --source manual --type note --text "First rawmem event"
+"The button should be 2px larger." | rawmem capture --source clipboard --type ui_feedback --stdin
+rawmem ingest --file event.json
+"Selected page text" | rawmem clip --stdin --url "https://example.com"
+rawmem run --source terminal -- python --version
+rawmem git-snapshot
 ```
 
 ## Current Coverage
 
-| Surface | Command | What lands in the ledger |
+| Surface | How | What lands in the ledger |
 | --- | --- | --- |
-| Manual notes | `capture` | Raw text, tags, artifacts, custom fields |
-| Any adapter/tool | `ingest` | JSON event payloads from external software |
-| Clipboard/selection | `clip` | Text plus optional URL/title |
-| Shell commands | `run` or PowerShell snippet | Command, cwd, exit code, stdout/stderr summary |
-| Git lifecycle | `setup --all` hooks | commit/checkout/merge/rewrite/push snapshots |
-| File changes | `watch` | batched created/modified/deleted paths |
-| Browser pages | `serve` + bookmarklet | title, URL, selected text |
+| Claude Code sessions | daemon tailer (zero friction) | user/assistant turns, project, session, branch |
+| Codex sessions | daemon tailer (zero friction) | user/assistant turns, project, session |
+| Shell commands | daemon tailer of PSReadLine history | every completed command line |
+| Clipboard | daemon poller (deduped, opt-out) | clipboard text changes |
+| Git lifecycle, all repos | `setup --global` core.hooksPath hooks | commit/checkout/merge/rewrite/push snapshots |
+| File changes | daemon watcher | batched created/modified/deleted paths |
+| Browser pages | MV3 extension (`extension/`) | selection or page text, title, URL |
+| Any adapter/tool | `ingest` / POST `/capture` | JSON event payloads |
+| Manual notes | `capture` / `clip` / `run` | raw text, tags, artifacts, command results |
 
 ## Storage
 

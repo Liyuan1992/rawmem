@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "rawmem clip",
+  "version": "0.1.0",
+  "description": "Save the current selection or page into the local rawmem evidence ledger.",
+  "permissions": ["contextMenus", "activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "rawmem: save selection (or page when nothing selected)" },
+  "options_page": "options.html",
+  "commands": {
+    "save-selection": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "Save current selection to rawmem"
+    },
+    "save-page": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "Save current page text to rawmem"
+    }
+  }
+}

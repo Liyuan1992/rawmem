@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>rawmem clip options</title>
+    <style>
+      body { font-family: system-ui, sans-serif; padding: 16px; max-width: 480px; }
+      label { display: block; margin-bottom: 4px; }
+      input { width: 100%; padding: 6px; box-sizing: border-box; }
+      button { margin-top: 12px; padding: 6px 16px; }
+      #status { margin-left: 8px; color: #2e7d32; }
+    </style>
+  </head>
+  <body>
+    <h2>rawmem clip</h2>
+    <label for="endpoint">Capture endpoint (rawmem daemon)</label>
+    <input id="endpoint" type="text" placeholder="http://127.0.0.1:8765/capture" />
+    <button id="save">Save</button><span id="status"></span>
+    <script src="options.js"></script>
+  </body>
+</html>

@@ -20,22 +20,62 @@ from .ledger import (
     resolve_ledger_path,
     summarize,
 )
-from .setup_tools import default_powershell_profile, install_powershell_profile, setup_project
+from .config import global_config_path, write_global_config
+from .daemon import read_status, run_daemon
+from .setup_tools import (
+    default_powershell_profile,
+    install_global_git_hooks,
+    install_powershell_profile,
+    install_startup_task,
+    setup_project,
+    start_startup_task,
+    uninstall_global_git_hooks,
+    uninstall_startup_task,
+)
 from .watcher import watch_loop, watch_once
 from .web_capture import build_bookmarklet, event_from_adapter_payload, serve_capture
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles often default to a legacy codepage; ledger content is
+    # UTF-8 and may be CJK, so emit UTF-8 instead of crashing or garbling.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and (stream.encoding or "").lower() not in ("utf-8", "utf8"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, OSError):
+                pass
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
         return args.func(args)
     except KeyboardInterrupt:
-        print("rawmem: interrupted", file=sys.stderr)
+        report_error("rawmem: interrupted")
         return 130
     except Exception as exc:
-        print(f"rawmem: {exc}", file=sys.stderr)
+        report_error(f"rawmem: {exc}", exc=exc)
         return 1
+
+
+def report_error(message: str, *, exc: Exception | None = None) -> None:
+    # Under pythonw.exe there is no console and sys.stderr is None; a crash
+    # must still leave a trace somewhere findable.
+    if sys.stderr is not None:
+        print(message, file=sys.stderr)
+        return
+    try:
+        import traceback
+
+        from .ledger import default_home
+
+        crash_log = default_home() / "cli-errors.log"
+        crash_log.parent.mkdir(parents=True, exist_ok=True)
+        with crash_log.open("a", encoding="utf-8") as handle:
+            handle.write(f"{message}\n")
+            if exc is not None:
+                traceback.print_exception(exc, file=handle)
+    except OSError:
+        pass
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,6 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_run_parser(sub)
     add_git_snapshot_parser(sub)
     add_watch_parser(sub)
+    add_daemon_parser(sub)
+    add_sync_parser(sub)
     add_serve_parser(sub)
     add_bookmarklet_parser(sub)
     add_tail_parser(sub)
@@ -77,6 +119,37 @@ def add_setup_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     parser.add_argument("--project-root", default=".", help="Project root to configure.")
     parser.add_argument("--all", action="store_true", help="Enable config, scripts, and git hooks.")
     parser.add_argument("--install-git-hooks", action="store_true", help="Install repo-local git hooks.")
+    parser.add_argument(
+        "--global",
+        dest="global_setup",
+        action="store_true",
+        help="Write the global daemon config (~/.rawmem/config.json) and global git hooks.",
+    )
+    parser.add_argument(
+        "--install-global-git-hooks",
+        action="store_true",
+        help="Install ~/.rawmem/git-hooks and set git core.hooksPath for all repositories.",
+    )
+    parser.add_argument(
+        "--uninstall-global-git-hooks",
+        action="store_true",
+        help="Unset git core.hooksPath if it points at the rawmem hooks directory.",
+    )
+    parser.add_argument(
+        "--install-startup",
+        action="store_true",
+        help="Register the rawmem daemon to start at logon (Windows scheduled task).",
+    )
+    parser.add_argument(
+        "--uninstall-startup",
+        action="store_true",
+        help="Remove the rawmem daemon logon task.",
+    )
+    parser.add_argument(
+        "--start-daemon",
+        action="store_true",
+        help="Start the registered daemon task right now.",
+    )
     parser.add_argument(
         "--install-powershell-profile",
         action="store_true",
@@ -170,6 +243,33 @@ def add_watch_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     parser.set_defaults(func=cmd_watch)
 
 
+def add_daemon_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser(
+        "daemon",
+        help="Run all background capture surfaces (tailers, clipboard, watch, serve) in one process.",
+    )
+    parser.add_argument("--once", action="store_true", help="Run one capture pass and exit.")
+    parser.add_argument("--status", action="store_true", help="Show daemon status and exit.")
+    parser.add_argument("--no-serve", action="store_true", help="Disable the localhost capture endpoint.")
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help="On first run, ingest existing history instead of starting from the end of files.",
+    )
+    parser.add_argument("--log-file", help="Append daemon logs to this file.")
+    parser.set_defaults(func=cmd_daemon)
+
+
+def add_sync_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("sync", help="Run the passive tailers once (no server, no loop).")
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help="On first run, ingest existing history instead of starting from the end of files.",
+    )
+    parser.set_defaults(func=cmd_sync)
+
+
 def add_serve_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("serve", help="Run a localhost capture endpoint for browser/tool adapters.")
     add_common_store_args(parser)
@@ -190,6 +290,9 @@ def add_tail_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     add_common_store_args(parser)
     parser.add_argument("--limit", type=int, default=10, help="Number of events to show.")
     parser.add_argument("--json", action="store_true", help="Print full JSON events.")
+    parser.add_argument("--source", help="Only show events from this source.")
+    parser.add_argument("--type", dest="event_type", help="Only show events of this type.")
+    parser.add_argument("--project", help="Only show events for this project.")
     parser.set_defaults(func=cmd_tail)
 
 
@@ -206,9 +309,37 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
+    actions: list[str] = []
+    global_requested = (
+        args.global_setup
+        or args.install_global_git_hooks
+        or args.uninstall_global_git_hooks
+        or args.install_startup
+        or args.uninstall_startup
+        or args.start_daemon
+    )
+    if args.global_setup:
+        actions.append(f"global_config={write_global_config(force=args.force)}")
+    if args.install_global_git_hooks or args.global_setup:
+        actions.extend(install_global_git_hooks(force=args.force))
+    if args.uninstall_global_git_hooks:
+        actions.extend(uninstall_global_git_hooks())
+    if args.install_startup:
+        if not args.yes:
+            raise ValueError("--install-startup registers a logon task; pass --yes to confirm")
+        actions.append(install_startup_task())
+    if args.uninstall_startup:
+        actions.append(uninstall_startup_task())
+    if args.start_daemon:
+        actions.append(start_startup_task())
+    if global_requested and not (args.all or args.install_git_hooks or args.install_powershell_profile):
+        for action in actions:
+            print(action)
+        return 0
+
     root = Path(args.project_root).resolve()
     install_hooks = args.install_git_hooks or args.all
-    actions = setup_project(
+    actions += setup_project(
         root,
         install_git_hooks=install_hooks,
         write_scripts=True,
@@ -441,6 +572,26 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_daemon(args: argparse.Namespace) -> int:
+    if args.status:
+        status = read_status()
+        if status is None:
+            print("no daemon status found; is the daemon running?")
+            return 1
+        print(json.dumps(status, ensure_ascii=False, indent=2))
+        return 0
+    return run_daemon(
+        once=args.once,
+        serve=not args.no_serve,
+        backfill=args.backfill,
+        log_file=args.log_file,
+    )
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    return run_daemon(once=True, serve=False, backfill=args.backfill)
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     serve_capture(
         host=args.host,
@@ -460,6 +611,12 @@ def cmd_bookmarklet(args: argparse.Namespace) -> int:
 def cmd_tail(args: argparse.Namespace) -> int:
     ledger_path = resolve_ledger_path(args.ledger, local=args.local)
     events = read_events(ledger_path)
+    if args.source:
+        events = [event for event in events if event.get("source") == args.source]
+    if args.event_type:
+        events = [event for event in events if event.get("event_type") == args.event_type]
+    if args.project:
+        events = [event for event in events if event.get("project") == args.project]
     if args.limit <= 0:
         return 0
     for event in events[-args.limit :]:

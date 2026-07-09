@@ -23,14 +23,14 @@ def build_bookmarklet(endpoint: str = "http://127.0.0.1:8765/capture") -> str:
     return "javascript:" + script
 
 
-def serve_capture(
+def create_capture_server(
     *,
     host: str = "127.0.0.1",
     port: int = 8765,
     ledger_path: str | Path | None = None,
     local: bool = False,
     cwd: str | Path | None = None,
-) -> None:
+) -> ThreadingHTTPServer:
     base_cwd = Path(cwd or Path.cwd()).resolve()
     ledger = resolve_ledger_path(ledger_path, local=local, cwd=base_cwd)
 
@@ -91,8 +91,21 @@ def serve_capture(
             self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
 
     server = ThreadingHTTPServer((host, port), Handler)
+    server.rawmem_ledger = ledger  # type: ignore[attr-defined]
+    return server
+
+
+def serve_capture(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    ledger_path: str | Path | None = None,
+    local: bool = False,
+    cwd: str | Path | None = None,
+) -> None:
+    server = create_capture_server(host=host, port=port, ledger_path=ledger_path, local=local, cwd=cwd)
     print(f"rawmem capture server listening on http://{host}:{port}")
-    print(f"ledger: {ledger}")
+    print(f"ledger: {server.rawmem_ledger}")  # type: ignore[attr-defined]
     server.serve_forever()
 
 
