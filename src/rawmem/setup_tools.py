@@ -63,18 +63,36 @@ def install_hooks(project_root: str | Path, hooks: Iterable[str]) -> list[Path]:
         raise ValueError(f"Not a git repository: {root}")
     hooks_dir = git_dir / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
+    runner_path = hooks_dir / "rawmem_git_hook_runner.py"
+    runner_path.write_text(generate_python_runner(), encoding="utf-8")
     installed: list[Path] = []
     for hook_name in hooks:
         target = hooks_dir / hook_name
-        block = generate_git_hook_block(hook_name)
+        block = generate_git_hook_block(hook_name, runner_path=runner_path)
         upsert_marked_block(target, block, begin=HOOK_BEGIN, end=HOOK_END, executable=True)
         installed.append(target)
     return installed
 
 
-def generate_git_hook_block(hook_name: str) -> str:
+def generate_python_runner() -> str:
+    package_parent = Path(__file__).resolve().parents[1]
+    return "\n".join(
+        [
+            "import sys",
+            "",
+            f"sys.path.insert(0, {str(package_parent)!r})",
+            "",
+            "from rawmem.cli import main",
+            "",
+            "raise SystemExit(main(sys.argv[1:]))",
+            "",
+        ]
+    )
+
+
+def generate_git_hook_block(hook_name: str, *, runner_path: str | Path | None = None) -> str:
     python_path = Path(sys.executable).as_posix()
-    src_path = Path(__file__).resolve().parents[1].as_posix()
+    runner = Path(runner_path).as_posix() if runner_path else "rawmem_git_hook_runner.py"
     return "\n".join(
         [
             "#!/bin/sh",
@@ -83,16 +101,16 @@ def generate_git_hook_block(hook_name: str) -> str:
             "RAWMEM_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null)\"",
             "[ -z \"$RAWMEM_ROOT\" ] && exit 0",
             "cd \"$RAWMEM_ROOT\" || exit 0",
-            f"RAWMEM_PYTHON='{python_path}'",
-            f"RAWMEM_SRC='{src_path}'",
-            "PYTHONPATH=\"$RAWMEM_SRC${PYTHONPATH:+:$PYTHONPATH}\" \"$RAWMEM_PYTHON\" -m rawmem git-snapshot --local --source git-hook --tag \"$RAWMEM_HOOK_NAME\" >/dev/null 2>&1 || true",
+            f"RAWMEM_PYTHON={sh_quote(python_path)}",
+            f"RAWMEM_RUNNER={sh_quote(runner)}",
+            "\"$RAWMEM_PYTHON\" \"$RAWMEM_RUNNER\" git-snapshot --local --source git-hook --tag \"$RAWMEM_HOOK_NAME\" </dev/null >/dev/null 2>&1 || true",
             HOOK_END,
             "",
         ]
     )
 
 
-def generate_global_git_hook(hook_name: str) -> str:
+def generate_global_git_hook(hook_name: str, *, runner_path: str | Path | None = None) -> str:
     """Global hook: snapshot to the global ledger, then chain to repo hooks.
 
     The chain target must come from `--git-dir`, NOT `--git-path hooks`:
@@ -101,7 +119,7 @@ def generate_global_git_hook(hook_name: str) -> str:
     any other accidental re-entry.
     """
     python_path = Path(sys.executable).as_posix()
-    src_path = Path(__file__).resolve().parents[1].as_posix()
+    runner = Path(runner_path).as_posix() if runner_path else "rawmem_git_hook_runner.py"
     return "\n".join(
         [
             "#!/bin/sh",
@@ -110,8 +128,8 @@ def generate_global_git_hook(hook_name: str) -> str:
             "RAWMEM_HOOK_GUARD=1",
             "export RAWMEM_HOOK_GUARD",
             "if [ \"$RAWMEM_DISABLE\" != \"1\" ]; then",
-            f"  PYTHONPATH='{src_path}'\"${{PYTHONPATH:+:$PYTHONPATH}}\" '{python_path}' -m rawmem git-snapshot"
-            f" --source git-hook --tag '{hook_name}' </dev/null >/dev/null 2>&1 || true",
+            f"  {sh_quote(python_path)} {sh_quote(runner)} git-snapshot"
+            f" --source git-hook --tag {sh_quote(hook_name)} </dev/null >/dev/null 2>&1 || true",
             "fi",
             "git_dir=\"$(git rev-parse --git-dir 2>/dev/null)\"",
             f"if [ -n \"$git_dir\" ] && [ -x \"$git_dir/hooks/{hook_name}\" ]; then",
@@ -138,10 +156,17 @@ def install_global_git_hooks(
     """
     target_dir = Path(hooks_dir) if hooks_dir else default_home() / "git-hooks"
     target_dir.mkdir(parents=True, exist_ok=True)
+    runner_path = target_dir / "rawmem_git_hook_runner.py"
+    runner_path.write_text(generate_python_runner(), encoding="utf-8")
     actions: list[str] = []
+    actions.append(f"global_git_hook_runner={runner_path}")
     for hook_name in hooks:
         hook_path = target_dir / hook_name
-        hook_path.write_text(generate_global_git_hook(hook_name), encoding="utf-8", newline="\n")
+        hook_path.write_text(
+            generate_global_git_hook(hook_name, runner_path=runner_path),
+            encoding="utf-8",
+            newline="\n",
+        )
         try:
             hook_path.chmod(hook_path.stat().st_mode | 0o111)
         except OSError:
@@ -356,3 +381,7 @@ def default_powershell_profile() -> Path:
 
 def powershell_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def sh_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"

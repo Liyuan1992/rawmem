@@ -123,12 +123,22 @@ def add_setup_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--global",
         dest="global_setup",
         action="store_true",
-        help="Write the global daemon config (~/.rawmem/config.json) and global git hooks.",
+        help="Write the global daemon config (~/.rawmem/config.json) and global git hooks. Requires --yes.",
     )
     parser.add_argument(
         "--install-global-git-hooks",
         action="store_true",
-        help="Install ~/.rawmem/git-hooks and set git core.hooksPath for all repositories.",
+        help="Install ~/.rawmem/git-hooks and set git core.hooksPath for all repositories. Requires --yes.",
+    )
+    parser.add_argument(
+        "--include-clipboard",
+        action="store_true",
+        help="Enable clipboard polling in the global daemon config. Off by default for privacy.",
+    )
+    parser.add_argument(
+        "--disable-clipboard",
+        action="store_true",
+        help="Disable clipboard polling in the global daemon config without rewriting other settings.",
     )
     parser.add_argument(
         "--uninstall-global-git-hooks",
@@ -319,8 +329,19 @@ def cmd_setup(args: argparse.Namespace) -> int:
         or args.start_daemon
     )
     if args.global_setup:
-        actions.append(f"global_config={write_global_config(force=args.force)}")
+        if not args.yes:
+            raise ValueError("--global writes machine-wide rawmem config and Git hooks; pass --yes to confirm")
+        if args.include_clipboard and args.disable_clipboard:
+            raise ValueError("--include-clipboard and --disable-clipboard cannot be used together")
+        actions.append(
+            "global_config="
+            f"{write_global_config(force=args.force, include_clipboard=args.include_clipboard, disable_clipboard=args.disable_clipboard)}"
+        )
     if args.install_global_git_hooks or args.global_setup:
+        if not args.yes:
+            raise ValueError(
+                "--install-global-git-hooks changes Git behavior for all repositories; pass --yes to confirm"
+            )
         actions.extend(install_global_git_hooks(force=args.force))
     if args.uninstall_global_git_hooks:
         actions.extend(uninstall_global_git_hooks())

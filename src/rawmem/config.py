@@ -107,7 +107,7 @@ def default_global_config() -> dict[str, Any]:
                     "batch_threshold": 20,
                 },
                 "clipboard": {
-                    "enabled": True,
+                    "enabled": False,
                     "interval_seconds": 4,
                     "max_chars": 20000,
                 },
@@ -142,11 +142,28 @@ def load_global_config(path: str | Path | None = None) -> dict[str, Any]:
     return deep_merge(defaults, loaded)
 
 
-def write_global_config(path: str | Path | None = None, *, force: bool = False) -> Path:
+def write_global_config(
+    path: str | Path | None = None,
+    *,
+    force: bool = False,
+    include_clipboard: bool = False,
+    disable_clipboard: bool = False,
+) -> Path:
     target = Path(path) if path else global_config_path()
-    if target.exists() and not force:
+    if target.exists() and not force and not include_clipboard and not disable_clipboard:
         return target
-    save_config(target, default_global_config())
+    config = default_global_config() if force or not target.exists() else load_global_config(target)
+    if include_clipboard and disable_clipboard:
+        raise ValueError("include_clipboard and disable_clipboard cannot both be true")
+    if include_clipboard:
+        config.setdefault("daemon", {}).setdefault("tailers", {}).setdefault("clipboard", {})[
+            "enabled"
+        ] = True
+    if disable_clipboard:
+        config.setdefault("daemon", {}).setdefault("tailers", {}).setdefault("clipboard", {})[
+            "enabled"
+        ] = False
+    save_config(target, config)
     return target
 
 

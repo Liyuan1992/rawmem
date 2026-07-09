@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rawmem.config import default_global_config, deep_merge, load_global_config
+from rawmem.config import default_global_config, deep_merge, load_global_config, write_global_config
 from rawmem.daemon import run_daemon
 from rawmem.ledger import read_events
 
@@ -26,6 +26,15 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config = load_global_config(Path(tmp) / "missing.json")
             self.assertEqual(config["schema"], "rawmem.config.v2")
+            self.assertFalse(config["daemon"]["tailers"]["clipboard"]["enabled"])
+
+    def test_write_global_config_can_toggle_clipboard_without_force(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            write_global_config(path, include_clipboard=True)
+            self.assertTrue(load_global_config(path)["daemon"]["tailers"]["clipboard"]["enabled"])
+            write_global_config(path, disable_clipboard=True)
+            self.assertFalse(load_global_config(path)["daemon"]["tailers"]["clipboard"]["enabled"])
 
 
 class DaemonOnceTests(unittest.TestCase):

@@ -30,7 +30,8 @@ Disk is cheap. Missing history is expensive.
 ## Install
 
 ```powershell
-cd D:\Dev\Projects\rawmem
+git clone <your-fork-or-repo-url> rawmem
+cd rawmem
 python -m pip install --user -e .
 ```
 
@@ -41,14 +42,16 @@ works from any directory.
 ## One-Time Setup
 
 ```powershell
-rawmem setup --global                 # global config + git hooks for all repos
+rawmem setup --global --yes           # global config + git hooks for all repos
 rawmem setup --install-startup --yes  # run the daemon headless at every logon
 rawmem setup --start-daemon           # start it right now
 ```
 
 After this the daemon passively tails Claude Code sessions, Codex sessions,
-PowerShell history, and the clipboard, watches configured directories, and
-serves the browser-capture endpoint — with zero per-event action from you.
+PowerShell history, watches configured directories, and serves the
+browser-capture endpoint — with zero per-event action from you. Clipboard
+polling is available but disabled by default; enable it explicitly in config
+or with `rawmem setup --global --yes --include-clipboard`.
 The guiding principle is **passive over self-report**: evidence is pulled
 from logs other tools already write, not pushed by agents remembering to
 report back.
@@ -93,8 +96,8 @@ rawmem git-snapshot
 | Claude Code sessions | daemon tailer (zero friction) | user/assistant turns, project, session, branch |
 | Codex sessions | daemon tailer (zero friction) | user/assistant turns, project, session |
 | Shell commands | daemon tailer of PSReadLine history | every completed command line |
-| Clipboard | daemon poller (deduped, opt-out) | clipboard text changes |
-| Git lifecycle, all repos | `setup --global` core.hooksPath hooks | commit/checkout/merge/rewrite/push snapshots |
+| Clipboard | daemon poller (deduped, opt-in) | clipboard text changes |
+| Git lifecycle, all repos | `setup --global --yes` core.hooksPath hooks | commit/checkout/merge/rewrite/push snapshots |
 | File changes | daemon watcher | batched created/modified/deleted paths |
 | Browser pages | MV3 extension (`extension/`) | selection or page text, title, URL |
 | Any adapter/tool | `ingest` / POST `/capture` | JSON event payloads |
@@ -170,12 +173,18 @@ All adapters should emit the same event schema.
 - No upload by default.
 - No automatic memory promotion.
 - Background capture must be opt-in.
+- Clipboard polling is off by default.
+- Machine-wide Git hook setup requires `--yes`.
 - Store raw events separately from reviewed or derived memory.
 - Prefer allowlists for browser/app capture.
+
+See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) before enabling
+background capture on a daily driver machine.
 
 ## Development
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m unittest discover -s tests
+python scripts/open_source_audit.py
 ```

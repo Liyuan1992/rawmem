@@ -14,7 +14,7 @@ python -m pip install --user -e .
 # %APPDATA%\Python\Python312\Scripts
 
 # 2. Global config + global git hooks for every repository
-rawmem setup --global
+rawmem setup --global --yes
 
 # 3. Start the daemon at every logon (headless pythonw scheduled task)
 rawmem setup --install-startup --yes
@@ -35,7 +35,7 @@ rawmem tail --limit 10
 | Claude Code sessions | daemon tailer | Zero | user/assistant turns with project, session, branch |
 | Codex sessions | daemon tailer | Zero | user/assistant turns with project, session |
 | PowerShell commands | daemon tailer (PSReadLine history) | Zero | every completed command line |
-| Clipboard | daemon poller | Zero (opt-out) | deduped clipboard text changes |
+| Clipboard | daemon poller | Zero after opt-in | deduped clipboard text changes |
 | Git lifecycle, all repos | `setup --global` (core.hooksPath) | One-time | commit/checkout/merge/rewrite/push snapshots |
 | File changes | daemon watcher (`daemon.watch.roots`) | One-time | batched created/modified/deleted paths |
 | Browser pages | MV3 extension in `extension/` | One-time | selection or page text, title, URL |
@@ -59,7 +59,10 @@ Notable knobs:
 - `daemon.watch.roots`: directories to watch (off by default until set).
 - `daemon.tailers.claude_code.include_assistant`: set `false` to keep only
   your own turns.
-- `daemon.tailers.clipboard.enabled`: set `false` to disable clipboard capture.
+- `daemon.tailers.clipboard.enabled`: disabled by default; set `true` or run
+  `rawmem setup --global --yes --include-clipboard` to enable it. Run
+  `rawmem setup --global --yes --disable-clipboard` to turn it off without
+  rewriting the rest of the config.
 - `daemon.serve.port`: capture endpoint port (default 8765).
 
 First run baselines existing files instead of ingesting months of history;
@@ -70,7 +73,7 @@ Logs: `~/.rawmem/daemon.log` (when headless), status in
 
 ## Global Git Hooks
 
-`rawmem setup --global` writes hooks into `~/.rawmem/git-hooks` and points
+`rawmem setup --global --yes` writes hooks into `~/.rawmem/git-hooks` and points
 `git config --global core.hooksPath` at it. Every repository on the machine
 then records commit/checkout/merge/rewrite/push snapshots with no per-repo
 setup. Each hook chains to the repository's own `.git/hooks/<name>` when one
@@ -101,7 +104,8 @@ browser history scraper. The broad capture surfaces are opt-in and local:
 - the shell tailer records completed command lines, not keystrokes;
 - Git hooks record repository state, not private browser/app data;
 - the file watcher records paths and metadata, not file contents;
-- the clipboard poller baselines at startup and can be disabled in config;
+- the clipboard poller is disabled by default, dedupes content, and baselines
+  at startup after it is enabled;
 - browser capture only happens when you explicitly trigger the extension;
 - raw events stay in the local ledger and remain review-required.
 

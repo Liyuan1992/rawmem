@@ -23,7 +23,7 @@ tailing its transcript is neither. So the priority order is:
 1. Capture adapters
    - Passive tailers: Claude Code transcripts, Codex session rollouts,
      PSReadLine shell history (all run inside `rawmem daemon`)
-   - Clipboard poller (opt-in, deduped, baselined at daemon start)
+   - Clipboard poller (off by default, opt-in, deduped, baselined at daemon start)
    - Global and repo-local Git hooks and snapshots
    - Polling file watcher
    - Localhost browser endpoint + MV3 extension (or legacy bookmarklet)
@@ -66,7 +66,7 @@ ledger; only new content is captured. `--backfill` opts into history.
 
 ```text
 pip install --user -e .            # `rawmem` on PATH everywhere
-rawmem setup --global              # ~/.rawmem/config.json + global git hooks
+rawmem setup --global --yes        # ~/.rawmem/config.json + global git hooks
 rawmem setup --install-startup --yes  # logon task running the daemon headless
 ```
 
