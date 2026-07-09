@@ -13,9 +13,13 @@ class GlobalGitHookTests(unittest.TestCase):
         self.assertTrue(script.startswith("#!/bin/sh"))
         self.assertIn("git-snapshot", script)
         self.assertIn("--tag 'pre-push'", script)
-        self.assertIn('exec "$repo_hooks/pre-push" "$@"', script)
+        self.assertIn('exec "$git_dir/hooks/pre-push" "$@"', script)
         self.assertIn("</dev/null", script)  # must not eat pre-push stdin
         self.assertIn("RAWMEM_DISABLE", script)
+        # --git-path hooks resolves through core.hooksPath back to this very
+        # directory and caused infinite self-exec; it must never come back.
+        self.assertNotIn("--git-path", script)
+        self.assertIn("RAWMEM_HOOK_GUARD", script)
 
     def test_install_writes_executable_hooks_without_touching_git_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

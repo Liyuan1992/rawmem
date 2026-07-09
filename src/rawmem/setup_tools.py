@@ -93,21 +93,29 @@ def generate_git_hook_block(hook_name: str) -> str:
 
 
 def generate_global_git_hook(hook_name: str) -> str:
-    """Global hook: snapshot to the global ledger, then chain to repo hooks."""
+    """Global hook: snapshot to the global ledger, then chain to repo hooks.
+
+    The chain target must come from `--git-dir`, NOT `--git-path hooks`:
+    the latter resolves through core.hooksPath and would return this very
+    directory, making the hook exec itself forever. A guard env var stops
+    any other accidental re-entry.
+    """
     python_path = Path(sys.executable).as_posix()
     src_path = Path(__file__).resolve().parents[1].as_posix()
     return "\n".join(
         [
             "#!/bin/sh",
             f"# rawmem global git hook: {hook_name}",
-            "if [ \"$RAWMEM_DISABLE\" = \"1\" ]; then rawmem_skip=1; else rawmem_skip=0; fi",
-            "if [ \"$rawmem_skip\" = \"0\" ]; then",
+            "[ \"$RAWMEM_HOOK_GUARD\" = \"1\" ] && exit 0",
+            "RAWMEM_HOOK_GUARD=1",
+            "export RAWMEM_HOOK_GUARD",
+            "if [ \"$RAWMEM_DISABLE\" != \"1\" ]; then",
             f"  PYTHONPATH='{src_path}'\"${{PYTHONPATH:+:$PYTHONPATH}}\" '{python_path}' -m rawmem git-snapshot"
             f" --source git-hook --tag '{hook_name}' </dev/null >/dev/null 2>&1 || true",
             "fi",
-            "repo_hooks=\"$(git rev-parse --git-path hooks 2>/dev/null)\"",
-            f"if [ -n \"$repo_hooks\" ] && [ -x \"$repo_hooks/{hook_name}\" ]; then",
-            f"  exec \"$repo_hooks/{hook_name}\" \"$@\"",
+            "git_dir=\"$(git rev-parse --git-dir 2>/dev/null)\"",
+            f"if [ -n \"$git_dir\" ] && [ -x \"$git_dir/hooks/{hook_name}\" ]; then",
+            f"  exec \"$git_dir/hooks/{hook_name}\" \"$@\"",
             "fi",
             "exit 0",
             "",
