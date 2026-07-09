@@ -1,0 +1,12 @@
+{
+  "source": "codex",
+  "event_type": "task_done",
+  "project": "rawmem",
+  "summary": "Scaffolded a local-first raw evidence ledger MVP.",
+  "raw_text": "User asked to create a new project for capturing raw AI workflow evidence.",
+  "tags": ["ai-coding", "evidence-ledger", "mvp"],
+  "payload": {
+    "status": "done",
+    "changed_files": ["README.md", "src/rawmem/cli.py", "src/rawmem/ledger.py"]
+  }
+}

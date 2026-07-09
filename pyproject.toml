@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rawmem"
+version = "0.1.0"
+description = "A tiny local-first raw evidence ledger for AI and human workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Liyuan" }]
+keywords = ["ai", "memory", "ledger", "evidence", "local-first"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development",
+]
+dependencies = []
+
+[project.scripts]
+rawmem = "rawmem.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
