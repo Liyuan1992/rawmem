@@ -21,6 +21,10 @@ Sensitive areas include:
 
 - No network upload is enabled by default.
 - The HTTP capture endpoint binds to `127.0.0.1` by default.
+- Browser/tool POSTs to the HTTP capture endpoint require a local random token
+  by default.
+- The HTTP capture endpoint does not expose the local ledger path in normal
+  JSON responses.
 - Global machine changes require explicit commands.
 - Clipboard polling is disabled by default.
 - Raw captured events remain review-required; they are not accepted memory.

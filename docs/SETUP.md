@@ -19,6 +19,9 @@ rawmem setup --global --yes
 # 3. Start the daemon at every logon (headless pythonw scheduled task)
 rawmem setup --install-startup --yes
 rawmem setup --start-daemon   # start it right now
+
+# 4. Browser extension token
+rawmem config --show-browser-token
 ```
 
 Check that it is alive:
@@ -60,10 +63,12 @@ Notable knobs:
 - `daemon.tailers.claude_code.include_assistant`: set `false` to keep only
   your own turns.
 - `daemon.tailers.clipboard.enabled`: disabled by default; set `true` or run
-  `rawmem setup --global --yes --include-clipboard` to enable it. Run
-  `rawmem setup --global --yes --disable-clipboard` to turn it off without
-  rewriting the rest of the config.
+  `rawmem config --include-clipboard` to enable it. Run
+  `rawmem config --disable-clipboard` to turn it off without changing global
+  Git hook settings.
 - `daemon.serve.port`: capture endpoint port (default 8765).
+- `daemon.serve.token`: random local browser capture token. Rotate with
+  `rawmem config --rotate-browser-token`.
 
 First run baselines existing files instead of ingesting months of history;
 use `--backfill` if you want the history.
@@ -86,14 +91,21 @@ Remove with `rawmem setup --uninstall-global-git-hooks`.
 
 Load `extension/` as an unpacked MV3 extension (Chrome/Edge:
 `chrome://extensions` → Developer mode → Load unpacked). It talks to the
-daemon's localhost endpoint. Capture via:
+daemon's localhost endpoint. Open the extension options page and paste the
+token from:
+
+```powershell
+rawmem config --show-browser-token
+```
+
+Capture via:
 
 - right-click → "rawmem: save selection" / "rawmem: save page"
 - `Alt+Shift+S` (selection) / `Alt+Shift+P` (page)
 - toolbar button (selection if any, otherwise page)
 
 The legacy bookmarklet (`rawmem bookmarklet`) still works but is blocked by
-strict CSP on some sites; the extension is the reliable path.
+strict CSP and CORS on many sites; the extension is the reliable path.
 
 ## Background Capture Boundaries
 
@@ -106,7 +118,8 @@ browser history scraper. The broad capture surfaces are opt-in and local:
 - the file watcher records paths and metadata, not file contents;
 - the clipboard poller is disabled by default, dedupes content, and baselines
   at startup after it is enabled;
-- browser capture only happens when you explicitly trigger the extension;
+- browser capture only happens when you explicitly trigger the extension and
+  the request includes the local capture token;
 - raw events stay in the local ledger and remain review-required.
 
 Pause everything: stop the daemon (`schtasks /End /TN rawmem-daemon` or kill

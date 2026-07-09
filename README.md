@@ -45,13 +45,14 @@ works from any directory.
 rawmem setup --global --yes           # global config + git hooks for all repos
 rawmem setup --install-startup --yes  # run the daemon headless at every logon
 rawmem setup --start-daemon           # start it right now
+rawmem config --show-browser-token    # paste into the browser extension options
 ```
 
 After this the daemon passively tails Claude Code sessions, Codex sessions,
 PowerShell history, watches configured directories, and serves the
 browser-capture endpoint — with zero per-event action from you. Clipboard
 polling is available but disabled by default; enable it explicitly in config
-or with `rawmem setup --global --yes --include-clipboard`.
+or with `rawmem config --include-clipboard`.
 The guiding principle is **passive over self-report**: evidence is pulled
 from logs other tools already write, not pushed by agents remembering to
 report back.
@@ -68,6 +69,8 @@ rawmem daemon              # run all background surfaces in one process
 rawmem daemon --status     # task counters, errors, last run times
 rawmem sync                # one manual tailer pass
 rawmem sync --backfill     # first run: also ingest existing history
+rawmem config --disable-clipboard
+rawmem config --rotate-browser-token
 ```
 
 Inspect the ledger:
@@ -99,7 +102,7 @@ rawmem git-snapshot
 | Clipboard | daemon poller (deduped, opt-in) | clipboard text changes |
 | Git lifecycle, all repos | `setup --global --yes` core.hooksPath hooks | commit/checkout/merge/rewrite/push snapshots |
 | File changes | daemon watcher | batched created/modified/deleted paths |
-| Browser pages | MV3 extension (`extension/`) | selection or page text, title, URL |
+| Browser pages | MV3 extension (`extension/`) + token-protected localhost endpoint | selection or page text, title, URL |
 | Any adapter/tool | `ingest` / POST `/capture` | JSON event payloads |
 | Manual notes | `capture` / `clip` / `run` | raw text, tags, artifacts, command results |
 
@@ -174,6 +177,7 @@ All adapters should emit the same event schema.
 - No automatic memory promotion.
 - Background capture must be opt-in.
 - Clipboard polling is off by default.
+- Browser capture requires the local token created in `~/.rawmem/config.json`.
 - Machine-wide Git hook setup requires `--yes`.
 - Store raw events separately from reviewed or derived memory.
 - Prefer allowlists for browser/app capture.

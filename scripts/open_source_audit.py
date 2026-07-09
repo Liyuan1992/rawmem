@@ -22,6 +22,24 @@ PRIVATE_PATH_PATTERNS = [
 PATH_SCAN_SUFFIXES = {".md", ".py", ".toml", ".json", ".js", ".html"}
 PRIVATE_PATH_ALLOWLIST_PREFIXES = {"tests/"}
 
+CODE_GUARDS = [
+    (
+        "src/rawmem/web_capture.py",
+        re.compile(r"Access-Control-Allow-Origin[\"']\s*,\s*[\"']\*"),
+        "capture server must not allow arbitrary browser origins",
+    ),
+    (
+        "src/rawmem/web_capture.py",
+        re.compile(r"[\"']ledger[\"']\s*:\s*str\(ledger\)"),
+        "HTTP responses must not expose the local ledger path",
+    ),
+    (
+        "src/rawmem/config.py",
+        re.compile(r"[\"']require_token[\"']\s*:\s*True"),
+        "global capture server must require a browser token by default",
+    ),
+]
+
 
 def tracked_files() -> list[Path]:
     result = subprocess.run(
@@ -66,6 +84,15 @@ def main() -> int:
             for pattern in PRIVATE_PATH_PATTERNS:
                 if pattern.search(text):
                     issues.append(f"private workstation path in {relative}: {pattern.pattern}")
+        for guard_path, pattern, message in CODE_GUARDS:
+            if relative != guard_path:
+                continue
+            matched = bool(pattern.search(text))
+            if guard_path == "src/rawmem/config.py":
+                if not matched:
+                    issues.append(f"missing safety guard in {relative}: {message}")
+            elif matched:
+                issues.append(f"unsafe safety guard in {relative}: {message}")
     if issues:
         print("open-source audit failed:")
         for issue in issues:

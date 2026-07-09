@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, TextIO
 
 from .clipboard import ClipboardTailer
-from .config import load_global_config
+from .config import load_global_config, new_capture_token
 from .ledger import append_event, build_event, default_home, resolve_ledger_path, utc_now_iso
 from .tailers import TailState, build_tailers_from_config
 from .watcher import watch_once
@@ -184,14 +184,26 @@ def run_daemon(
     if serve and serve_cfg.get("enabled", True) and not once:
         host = serve_cfg.get("host", "127.0.0.1")
         port = int(serve_cfg.get("port", 8765))
+        require_token = bool(serve_cfg.get("require_token", True))
+        token = serve_cfg.get("token")
+        if require_token and (not isinstance(token, str) or not token.strip()):
+            token = new_capture_token()
+            emit("daemon: generated ephemeral capture token; run `rawmem config --show-browser-token` after setup for extension use")
         try:
-            server = create_capture_server(host=host, port=port, ledger_path=ledger)
+            server = create_capture_server(
+                host=host,
+                port=port,
+                ledger_path=ledger,
+                token=token if isinstance(token, str) else None,
+                require_token=require_token,
+                allowed_origins=serve_cfg.get("allowed_origins"),
+            )
         except OSError as exc:
             emit(f"daemon: port {port} unavailable ({exc}); another daemon is likely running")
             return 1
         thread = threading.Thread(target=server.serve_forever, name="rawmem-serve", daemon=True)
         thread.start()
-        serve_info = {"host": host, "port": port}
+        serve_info = {"host": host, "port": port, "auth": "required" if require_token else "disabled"}
         emit(f"daemon: capture endpoint on http://{host}:{port}")
 
     tasks = build_tasks(cfg, ledger=ledger, state=state, backfill=backfill)

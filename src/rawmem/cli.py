@@ -20,7 +20,7 @@ from .ledger import (
     resolve_ledger_path,
     summarize,
 )
-from .config import global_config_path, write_global_config
+from .config import ensure_capture_token, global_config_path, load_global_config, write_global_config
 from .daemon import read_status, run_daemon
 from .setup_tools import (
     default_powershell_profile,
@@ -88,6 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     add_init_parser(sub)
     add_setup_parser(sub)
+    add_config_parser(sub)
     add_capture_parser(sub)
     add_ingest_parser(sub)
     add_clip_parser(sub)
@@ -169,6 +170,34 @@ def add_setup_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     parser.add_argument("--force", action="store_true", help="Overwrite generated config/scripts blocks.")
     parser.add_argument("--yes", action="store_true", help="Confirm user-profile writes for non-interactive setup.")
     parser.set_defaults(func=cmd_setup)
+
+
+def add_config_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("config", help="Manage the global daemon config without installing hooks.")
+    parser.add_argument("--init", action="store_true", help="Create or refresh ~/.rawmem/config.json.")
+    parser.add_argument(
+        "--include-clipboard",
+        action="store_true",
+        help="Enable clipboard polling in the global daemon config.",
+    )
+    parser.add_argument(
+        "--disable-clipboard",
+        action="store_true",
+        help="Disable clipboard polling in the global daemon config.",
+    )
+    parser.add_argument(
+        "--show-browser-token",
+        action="store_true",
+        help="Print the browser capture token for the extension options page.",
+    )
+    parser.add_argument(
+        "--rotate-browser-token",
+        action="store_true",
+        help="Rotate the browser capture token and print the new value.",
+    )
+    parser.add_argument("--path", action="store_true", help="Print the global config path.")
+    parser.add_argument("--json", action="store_true", help="Print the effective global config as JSON.")
+    parser.set_defaults(func=cmd_config)
 
 
 def add_capture_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -286,12 +315,22 @@ def add_serve_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     parser.add_argument("--host", default="127.0.0.1", help="Listen host.")
     parser.add_argument("--port", type=int, default=8765, help="Listen port.")
     parser.add_argument("--cwd", help="Working directory to store in events.")
+    parser.add_argument("--token", help="Browser capture token. Defaults to daemon.serve.token in global config.")
+    parser.add_argument("--no-token", action="store_true", help="Disable token checks for this foreground server.")
+    parser.add_argument(
+        "--allow-origin",
+        action="append",
+        default=[],
+        help="Allowed CORS origin or prefix. Can be repeated.",
+    )
     parser.set_defaults(func=cmd_serve)
 
 
 def add_bookmarklet_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("bookmarklet", help="Print a browser bookmarklet for selected-text capture.")
     parser.add_argument("--endpoint", default="http://127.0.0.1:8765/capture", help="Capture endpoint.")
+    parser.add_argument("--token", help="Browser capture token. Defaults to daemon.serve.token in global config.")
+    parser.add_argument("--no-token", action="store_true", help="Generate a bookmarklet without an auth header.")
     parser.set_defaults(func=cmd_bookmarklet)
 
 
@@ -320,6 +359,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_setup(args: argparse.Namespace) -> int:
     actions: list[str] = []
+    clipboard_requested = args.include_clipboard or args.disable_clipboard
     global_requested = (
         args.global_setup
         or args.install_global_git_hooks
@@ -328,6 +368,15 @@ def cmd_setup(args: argparse.Namespace) -> int:
         or args.uninstall_startup
         or args.start_daemon
     )
+    if clipboard_requested and not args.global_setup:
+        actions.append(
+            "global_config="
+            f"{write_global_config(include_clipboard=args.include_clipboard, disable_clipboard=args.disable_clipboard)}"
+        )
+        if not (args.all or args.install_git_hooks or args.install_powershell_profile):
+            for action in actions:
+                print(action)
+            return 0
     if args.global_setup:
         if not args.yes:
             raise ValueError("--global writes machine-wide rawmem config and Git hooks; pass --yes to confirm")
@@ -374,6 +423,35 @@ def cmd_setup(args: argparse.Namespace) -> int:
         actions.append(f"powershell_profile={installed}")
     for action in actions:
         print(action)
+    return 0
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    if args.include_clipboard and args.disable_clipboard:
+        raise ValueError("--include-clipboard and --disable-clipboard cannot be used together")
+    needs_write = (
+        args.init
+        or args.include_clipboard
+        or args.disable_clipboard
+        or args.rotate_browser_token
+        or args.show_browser_token
+    )
+    path = global_config_path()
+    if needs_write:
+        write_global_config(
+            include_clipboard=args.include_clipboard,
+            disable_clipboard=args.disable_clipboard,
+            rotate_browser_token=args.rotate_browser_token,
+        )
+    if args.path:
+        print(path)
+    config = load_global_config(path)
+    if args.show_browser_token or args.rotate_browser_token:
+        print(ensure_capture_token(config))
+    if args.json:
+        print(json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True))
+    if not (args.path or args.show_browser_token or args.rotate_browser_token or args.json):
+        print(f"global_config={path}")
     return 0
 
 
@@ -614,18 +692,32 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
+    config = load_global_config()
+    serve_cfg = (config.get("daemon") or {}).get("serve") or {}
+    require_token = not args.no_token
+    token = args.token or serve_cfg.get("token")
+    if require_token and (not isinstance(token, str) or not token.strip()):
+        raise ValueError("capture token missing; run `rawmem config --init` or pass --token/--no-token")
     serve_capture(
         host=args.host,
         port=args.port,
         ledger_path=args.ledger,
         local=args.local,
         cwd=args.cwd,
+        token=token if isinstance(token, str) else None,
+        require_token=require_token,
+        allowed_origins=args.allow_origin or serve_cfg.get("allowed_origins"),
     )
     return 0
 
 
 def cmd_bookmarklet(args: argparse.Namespace) -> int:
-    print(build_bookmarklet(args.endpoint))
+    token = None
+    if not args.no_token:
+        config = load_global_config()
+        serve_cfg = (config.get("daemon") or {}).get("serve") or {}
+        token = args.token or serve_cfg.get("token")
+    print(build_bookmarklet(args.endpoint, token=token if isinstance(token, str) else None))
     return 0
 
 

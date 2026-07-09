@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from rawmem.cli import main
+from rawmem.config import load_global_config
 from rawmem.ledger import read_events
 from rawmem.setup_tools import generate_global_git_hook, install_global_git_hooks
 
@@ -49,6 +50,40 @@ class GlobalGitHookTests(unittest.TestCase):
             finally:
                 restore_env("RAWMEM_HOME", old_home)
                 restore_env("GIT_CONFIG_GLOBAL", old_git_config)
+
+    def test_setup_clipboard_toggle_does_not_install_global_hooks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            rawmem_home = base / "rawmem-home"
+            git_config = base / "gitconfig"
+            old_home = os.environ.get("RAWMEM_HOME")
+            old_git_config = os.environ.get("GIT_CONFIG_GLOBAL")
+            os.environ["RAWMEM_HOME"] = str(rawmem_home)
+            os.environ["GIT_CONFIG_GLOBAL"] = str(git_config)
+            try:
+                self.assertEqual(main(["setup", "--disable-clipboard"]), 0)
+                config = load_global_config(rawmem_home / "config.json")
+                self.assertFalse(config["daemon"]["tailers"]["clipboard"]["enabled"])
+                self.assertIsInstance(config["daemon"]["serve"]["token"], str)
+                self.assertFalse(git_config.exists())
+                self.assertFalse((rawmem_home / "git-hooks").exists())
+            finally:
+                restore_env("RAWMEM_HOME", old_home)
+                restore_env("GIT_CONFIG_GLOBAL", old_git_config)
+
+    def test_config_command_can_rotate_browser_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rawmem_home = Path(tmp) / "rawmem-home"
+            old_home = os.environ.get("RAWMEM_HOME")
+            os.environ["RAWMEM_HOME"] = str(rawmem_home)
+            try:
+                self.assertEqual(main(["config", "--init"]), 0)
+                first = load_global_config(rawmem_home / "config.json")["daemon"]["serve"]["token"]
+                self.assertEqual(main(["config", "--rotate-browser-token"]), 0)
+                second = load_global_config(rawmem_home / "config.json")["daemon"]["serve"]["token"]
+                self.assertNotEqual(first, second)
+            finally:
+                restore_env("RAWMEM_HOME", old_home)
 
     def test_global_git_hook_records_real_commit_and_chains_repo_hook(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

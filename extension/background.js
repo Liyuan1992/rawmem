@@ -62,10 +62,12 @@ async function captureTab(tab, mode) {
       tags: ["browser", "extension", data.kind],
       payload: { url: data.url, title: data.title, host: data.host },
     };
-    const { endpoint } = await chrome.storage.sync.get({ endpoint: DEFAULT_ENDPOINT });
+    const { endpoint, token } = await chrome.storage.sync.get({ endpoint: DEFAULT_ENDPOINT, token: "" });
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["X-Rawmem-Token"] = token;
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);

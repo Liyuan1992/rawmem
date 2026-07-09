@@ -33,7 +33,7 @@ Depending on enabled capture surfaces, the ledger can contain:
   `--backfill` is used.
 - Clipboard polling is disabled by default.
 - Browser capture is explicit: you trigger the extension or send JSON to the
-  localhost endpoint.
+  token-protected localhost endpoint.
 - Global Git hook installation requires `--yes`.
 
 ## Pause And Remove
@@ -50,10 +50,16 @@ Remove global Git hooks:
 rawmem setup --uninstall-global-git-hooks
 ```
 
-Disable clipboard polling while keeping the rest of the global config:
+Disable clipboard polling while keeping Git hook settings untouched:
 
 ```powershell
-rawmem setup --global --yes --disable-clipboard
+rawmem config --disable-clipboard
+```
+
+Rotate the browser capture token:
+
+```powershell
+rawmem config --rotate-browser-token
 ```
 
 Stop the Windows startup task:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +78,19 @@ def default_global_config() -> dict[str, Any]:
         "ledger": None,
         "daemon": {
             "cycle_seconds": 1.0,
-            "serve": {"enabled": True, "host": "127.0.0.1", "port": 8765},
+            "serve": {
+                "enabled": True,
+                "host": "127.0.0.1",
+                "port": 8765,
+                "require_token": True,
+                "token": None,
+                "allowed_origins": [
+                    "http://127.0.0.1",
+                    "http://localhost",
+                    "chrome-extension://",
+                    "moz-extension://",
+                ],
+            },
             "watch": {
                 "enabled": False,
                 "roots": [],
@@ -116,6 +129,20 @@ def default_global_config() -> dict[str, Any]:
     }
 
 
+def new_capture_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def ensure_capture_token(config: dict[str, Any], *, rotate: bool = False) -> str:
+    serve = config.setdefault("daemon", {}).setdefault("serve", {})
+    token = serve.get("token")
+    if rotate or not isinstance(token, str) or not token.strip():
+        token = new_capture_token()
+        serve["token"] = token
+    serve.setdefault("require_token", True)
+    return token
+
+
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in override.items():
@@ -148,13 +175,24 @@ def write_global_config(
     force: bool = False,
     include_clipboard: bool = False,
     disable_clipboard: bool = False,
+    ensure_browser_token: bool = True,
+    rotate_browser_token: bool = False,
 ) -> Path:
     target = Path(path) if path else global_config_path()
-    if target.exists() and not force and not include_clipboard and not disable_clipboard:
+    if (
+        target.exists()
+        and not force
+        and not include_clipboard
+        and not disable_clipboard
+        and not ensure_browser_token
+        and not rotate_browser_token
+    ):
         return target
     config = default_global_config() if force or not target.exists() else load_global_config(target)
     if include_clipboard and disable_clipboard:
         raise ValueError("include_clipboard and disable_clipboard cannot both be true")
+    if ensure_browser_token or rotate_browser_token:
+        ensure_capture_token(config, rotate=rotate_browser_token)
     if include_clipboard:
         config.setdefault("daemon", {}).setdefault("tailers", {}).setdefault("clipboard", {})[
             "enabled"

@@ -18,6 +18,9 @@ rawmem --version
 - `PRIVACY.md` and `SECURITY.md` match the current defaults.
 - `rawmem setup --global` refuses to run without `--yes`.
 - Clipboard polling is off in `default_global_config()`.
+- Browser capture requires `daemon.serve.token` by default.
+- HTTP capture responses do not expose the local ledger path.
+- `rawmem config --disable-clipboard` does not install global Git hooks.
 - The global Git hook integration test performs a real `git commit`.
 - `.rawmem/`, private ledgers, logs, caches, and generated artifacts are not
   tracked by Git.

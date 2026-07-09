@@ -26,7 +26,7 @@ tailing its transcript is neither. So the priority order is:
    - Clipboard poller (off by default, opt-in, deduped, baselined at daemon start)
    - Global and repo-local Git hooks and snapshots
    - Polling file watcher
-   - Localhost browser endpoint + MV3 extension (or legacy bookmarklet)
+   - Token-protected localhost browser endpoint + MV3 extension
    - Manual CLI capture, generic JSON ingest, CLI command wrapper
    - App-specific exporters
 
@@ -54,9 +54,10 @@ tailing its transcript is neither. So the priority order is:
 
 `rawmem daemon` is the single resident process for every background surface:
 a scheduler loop where each surface (tailer, clipboard, watcher, HTTP
-endpoint) is a periodic task with its own interval. One process, one
-autostart entry, one status file (`~/.rawmem/daemon-status.json`), one state
-file for tail offsets (`~/.rawmem/tailer-state.json`).
+endpoint) is a periodic task with its own interval. One process, one autostart
+entry, one token-protected browser/tool endpoint, one status file
+(`~/.rawmem/daemon-status.json`), one state file for tail offsets
+(`~/.rawmem/tailer-state.json`).
 
 First-run behavior is baseline-not-backfill: existing history files get
 their offsets set to end-of-file so a fresh install does not flood the

@@ -27,12 +27,16 @@ class ConfigTests(unittest.TestCase):
             config = load_global_config(Path(tmp) / "missing.json")
             self.assertEqual(config["schema"], "rawmem.config.v2")
             self.assertFalse(config["daemon"]["tailers"]["clipboard"]["enabled"])
+            self.assertTrue(config["daemon"]["serve"]["require_token"])
+            self.assertIsNone(config["daemon"]["serve"]["token"])
 
     def test_write_global_config_can_toggle_clipboard_without_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
             write_global_config(path, include_clipboard=True)
-            self.assertTrue(load_global_config(path)["daemon"]["tailers"]["clipboard"]["enabled"])
+            config = load_global_config(path)
+            self.assertTrue(config["daemon"]["tailers"]["clipboard"]["enabled"])
+            self.assertIsInstance(config["daemon"]["serve"]["token"], str)
             write_global_config(path, disable_clipboard=True)
             self.assertFalse(load_global_config(path)["daemon"]["tailers"]["clipboard"]["enabled"])
 
