@@ -162,6 +162,49 @@ class CliTests(unittest.TestCase):
         self.assertIn("javascript:", out.getvalue())
         self.assertIn("127.0.0.1:9999/capture", out.getvalue())
 
+    def test_verify_and_incremental_export_cursor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "events.jsonl"
+            cursor = Path(tmp) / "cursor.json"
+            for text in ("one", "two"):
+                self.assertEqual(
+                    main(["capture", "--ledger", str(ledger), "--source", "unit", "--text", text]),
+                    0,
+                )
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(main(["verify", "--ledger", str(ledger), "--json"]), 0)
+            self.assertTrue(json.loads(out.getvalue())["valid"])
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(
+                    main(
+                        [
+                            "export",
+                            "--ledger",
+                            str(ledger),
+                            "--cursor-file",
+                            str(cursor),
+                            "--limit",
+                            "1",
+                        ]
+                    ),
+                    0,
+                )
+            first = json.loads(out.getvalue())
+            self.assertEqual(len(first["events"]), 1)
+            self.assertTrue(cursor.exists())
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(
+                    main(["export", "--ledger", str(ledger), "--cursor-file", str(cursor)]),
+                    0,
+                )
+            second = json.loads(out.getvalue())
+            self.assertEqual([event["raw_text"] for event in second["events"]], ["two"])
+
 
 if __name__ == "__main__":
     unittest.main()
