@@ -1,0 +1,30 @@
+{
+  "schema_version": "rawmem.ledger_benchmark.v1",
+  "captured_at": "2026-07-10T16:06:00+08:00",
+  "platform": "Windows 11, Python 3.12",
+  "seed_events": 1000000,
+  "timed_appends": 30,
+  "final_events": 1000030,
+  "ledger_bytes": 606684288,
+  "seed_seconds": 9.192,
+  "append_ms": {
+    "p50": 5.355,
+    "p95": 6.486,
+    "max": 8.77
+  },
+  "cursor_batch_100_ms": {
+    "p50": 1.016,
+    "p95": 1.645,
+    "max": 7.911
+  },
+  "cursor_events_read": 3000,
+  "cursor_peak_memory_bytes": 274932,
+  "verify_seconds": 8.324,
+  "verify_valid": true,
+  "verify_event_count": 1000030,
+  "notes": [
+    "The benchmark ledger contains fictional synthetic events only.",
+    "Fixture seeding is excluded from append latency; timed appends use append_event with lock, fsync, and sidecar update.",
+    "Cursor batches use iter_events(limit=100) and do not load the 606 MB ledger."
+  ]
+}

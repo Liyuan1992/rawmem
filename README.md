@@ -94,6 +94,7 @@ rawmem tail --source claude-code --limit 5
 rawmem tail --project rawmem --type agent_user_turn --json
 rawmem verify --json
 rawmem export --cursor-file .rawmem\consumer-cursor.json --limit 100
+rawmem rotate --yes                 # explicit archive + new ledger identity
 ```
 
 `rawmem export` uses the stable `rawmem.cursor.v1` contract and never needs to
@@ -119,6 +120,7 @@ rawmem git-snapshot
 | --- | --- | --- |
 | Claude Code sessions | daemon tailer (zero friction) | user/assistant turns, project, session, branch |
 | Codex sessions | daemon tailer (zero friction) | user/assistant turns, project, session |
+| Cursor agent transcripts | daemon tailer (zero friction) | user/assistant turns, workspace, session |
 | Shell commands | daemon tailer of PSReadLine history | every completed command line |
 | Clipboard | daemon poller (deduped, opt-in) | clipboard text changes |
 | Git lifecycle, all repos | `setup --global --yes` core.hooksPath hooks | commit/checkout/merge/rewrite/push snapshots |
@@ -142,6 +144,12 @@ Use `--local` to write to the current project's private ledger:
 ```
 
 Use `--ledger <path>` or `RAWMEM_LEDGER` for an explicit ledger path.
+
+Capture policy is configured under `privacy` in `~/.rawmem/config.json`.
+Optional project/path allowlists fail closed, common secret shapes are redacted
+before append, and artifacts default to metadata references rather than
+embedded content. Daemon status and `rawmem doctor` expose source coverage,
+skipped events, redactions, and cursor health without printing captured text.
 
 `.rawmem/` is ignored by Git because raw evidence can contain private text,
 paths, command output, and local work context.
