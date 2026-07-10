@@ -16,13 +16,13 @@ def test_redaction_removes_common_secret_shapes():
         source="test",
         event_type="note",
         project="allowed",
-        raw_text="API_KEY=super-secret-value Bearer abcdefghijklmnopqrstuvwxyz",
+        raw_text="API_KEY=fake-value Bearer abcdefghijklmnopqrstuvwxyz",
         payload={"password": "password=hunter2"},
     )
     decision = policy.apply(event)
     assert decision.accepted is True
     text = str(decision.event)
-    assert "super-secret-value" not in text
+    assert "fake-value" not in text
     assert "hunter2" not in text
     assert "abcdefghijklmnopqrstuvwxyz" not in text
     assert decision.redaction_count >= 3
