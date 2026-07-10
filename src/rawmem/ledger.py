@@ -723,6 +723,40 @@ def iter_events(
         )
 
 
+def rotate_ledger(
+    ledger_path: str | Path,
+    *,
+    destination: str | Path | None = None,
+) -> dict[str, Any]:
+    """Archive one ledger and create a new identity at the original path."""
+
+    path = Path(ledger_path)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    archive = Path(destination) if destination else path.with_name(f"{path.stem}.{stamp}{path.suffix}")
+    if archive.exists() or ledger_state_path(archive).exists():
+        raise FileExistsError(f"Rotation destination already exists: {archive}")
+    with exclusive_file_lock(ledger_lock_path(path)):
+        old_state = _ensure_state_unlocked(path)
+        old_id = str(old_state["ledger_id"])
+        old_size = path.stat().st_size if path.exists() else 0
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            os.replace(path, archive)
+        old_state_path = ledger_state_path(path)
+        if old_state_path.exists():
+            os.replace(old_state_path, ledger_state_path(archive))
+        new_state = _ensure_state_unlocked(path)
+        return {
+            "schema_version": "rawmem.rotation.v1",
+            "archived_ledger": str(archive),
+            "archived_ledger_id": old_id,
+            "archived_bytes": old_size,
+            "new_ledger": str(path),
+            "new_ledger_id": str(new_state["ledger_id"]),
+            "rotated_at": utc_now_iso(),
+        }
+
+
 def init_local_store(cwd: str | Path | None = None) -> Path:
     base = Path(cwd or os.getcwd())
     store = base / ".rawmem"

@@ -22,6 +22,7 @@ tailing its transcript is neither. So the priority order is:
 
 1. Capture adapters
    - Passive tailers: Claude Code transcripts, Codex session rollouts,
+     Cursor agent transcripts,
      PSReadLine shell history (all run inside `rawmem daemon`)
    - Clipboard poller (off by default, opt-in, deduped, baselined at daemon start)
    - Global and repo-local Git hooks and snapshots
@@ -60,6 +61,11 @@ endpoint) is a periodic task with its own interval. One process, one autostart
 entry, one token-protected browser/tool endpoint, one status file
 (`~/.rawmem/daemon-status.json`), one state file for tail offsets
 (`~/.rawmem/tailer-state.json`).
+
+Every daemon surface passes through one `CapturePolicy` before append. The
+policy owns project/path allowlists, privacy scope, configured secret
+redaction, and artifact-reference boundaries. It can reject or sanitize an
+event, but it never promotes evidence into semantic memory.
 
 First-run behavior is baseline-not-backfill: existing history files get
 their offsets set to end-of-file so a fresh install does not flood the

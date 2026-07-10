@@ -25,6 +25,8 @@ jobs:
         run: python -m unittest discover -s tests
       - name: Open-source audit
         run: python scripts/open_source_audit.py
+      - name: Controlled daemon smoke
+        run: python scripts/smoke_daemon.py
       - name: CLI smoke test
         shell: pwsh
         run: |

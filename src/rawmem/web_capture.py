@@ -4,7 +4,7 @@ import json
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from .ledger import append_event, build_event, resolve_ledger_path
@@ -45,13 +45,14 @@ def create_capture_server(
     token: str | None = None,
     require_token: bool = True,
     allowed_origins: list[str] | None = None,
+    event_policy: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> ThreadingHTTPServer:
     base_cwd = Path(cwd or Path.cwd()).resolve()
     ledger = resolve_ledger_path(ledger_path, local=local, cwd=base_cwd)
     origins = allowed_origins or DEFAULT_ALLOWED_ORIGINS
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "rawmem-capture/0.5"
+        server_version = "rawmem-capture/0.6"
 
         def do_OPTIONS(self) -> None:  # noqa: N802
             self.send_response(204)
@@ -99,6 +100,11 @@ def create_capture_server(
                 body = self.rfile.read(length).decode("utf-8")
                 payload = json.loads(body or "{}")
                 event = event_from_adapter_payload(payload, cwd=base_cwd)
+                if event_policy is not None:
+                    event = event_policy(event)
+                    if event is None:
+                        self._json({"ok": False, "error": "capture_policy_rejected"}, status=403)
+                        return
                 saved = append_event(ledger, event)
             except Exception as exc:  # pragma: no cover - defensive HTTP boundary
                 self.send_error(400, str(exc))
@@ -156,6 +162,7 @@ def serve_capture(
     token: str | None = None,
     require_token: bool = True,
     allowed_origins: list[str] | None = None,
+    event_policy: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> None:
     server = create_capture_server(
         host=host,
@@ -166,6 +173,7 @@ def serve_capture(
         token=token,
         require_token=require_token,
         allowed_origins=allowed_origins,
+        event_policy=event_policy,
     )
     print(f"rawmem capture server listening on http://{host}:{port}")
     print(f"ledger: {server.rawmem_ledger}")  # type: ignore[attr-defined]

@@ -46,6 +46,7 @@ use `rawmem doctor --strict` when every optional integration is expected.
 | --- | --- | --- | --- |
 | Claude Code sessions | daemon tailer | Zero | user/assistant turns with project, session, branch |
 | Codex sessions | daemon tailer | Zero | user/assistant turns with project, session |
+| Cursor agent transcripts | daemon tailer | Zero | user/assistant turns with workspace and session |
 | PowerShell commands | daemon tailer (PSReadLine history) | Zero | every completed command line |
 | Clipboard | daemon poller | Zero after opt-in | deduped clipboard text changes |
 | Git lifecycle, all repos | `setup --global` (core.hooksPath) | One-time | commit/checkout/merge/rewrite/push snapshots |
@@ -71,6 +72,8 @@ Notable knobs:
 - `daemon.watch.roots`: directories to watch (off by default until set).
 - `daemon.tailers.claude_code.include_assistant`: set `false` to keep only
   your own turns.
+- `daemon.tailers.cursor.root`: override Cursor's default
+  `~/.cursor/projects` transcript root.
 - `daemon.tailers.clipboard.enabled`: disabled by default; set `true` or run
   `rawmem config --include-clipboard` to enable it. Run
   `rawmem config --disable-clipboard` to turn it off without changing global
@@ -78,6 +81,13 @@ Notable knobs:
 - `daemon.serve.port`: capture endpoint port (default 8765).
 - `daemon.serve.token`: random local browser capture token. Rotate with
   `rawmem config --rotate-browser-token`.
+- `privacy.project_allowlist` / `privacy.path_allowlist`: optional glob
+  allowlists. Empty means no allowlist restriction; once populated, unmatched
+  events are skipped and counted.
+- `privacy.redaction`: common secret shapes are redacted by default; add local
+  regex patterns when a tool emits another credential shape.
+- `privacy.artifacts.mode`: defaults to `references_only`; embedded artifact
+  content is dropped while path/size/hash metadata remains.
 
 First run baselines existing files instead of ingesting months of history;
 use `--backfill` if you want the history.

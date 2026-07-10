@@ -76,6 +76,18 @@ def default_global_config() -> dict[str, Any]:
     return {
         "schema": GLOBAL_CONFIG_SCHEMA,
         "ledger": None,
+        "privacy": {
+            "allowed_scopes": ["local_only"],
+            "project_allowlist": [],
+            "project_denylist": [],
+            "path_allowlist": [],
+            "path_denylist": [],
+            "redaction": {"enabled": True, "patterns": []},
+            "artifacts": {
+                "mode": "references_only",
+                "max_size_bytes": 104857600,
+            },
+        },
         "daemon": {
             "cycle_seconds": 1.0,
             "serve": {
@@ -107,6 +119,13 @@ def default_global_config() -> dict[str, Any]:
                     "root": None,
                 },
                 "codex": {
+                    "enabled": True,
+                    "interval_seconds": 20,
+                    "include_assistant": True,
+                    "max_chars": 6000,
+                    "root": None,
+                },
+                "cursor": {
                     "enabled": True,
                     "interval_seconds": 20,
                     "include_assistant": True,

@@ -21,19 +21,33 @@ from typing import Any, Callable, TextIO
 from .clipboard import ClipboardTailer
 from .config import load_global_config, new_capture_token
 from .ledger import append_event, build_event, default_home, resolve_ledger_path, utc_now_iso
+from .privacy import CapturePolicy
 from .tailers import TailState, build_tailers_from_config
 from .watcher import watch_once
 from .web_capture import create_capture_server
 
 
 @dataclass
+class CaptureRunResult:
+    events: int = 0
+    skipped: int = 0
+    redactions: int = 0
+    tracked_files: int = 0
+    available_files: int = 0
+
+
+@dataclass
 class PeriodicTask:
     name: str
     interval_seconds: float
-    run: Callable[[], int]
+    run: Callable[[], int | CaptureRunResult]
     next_due: float = 0.0
     runs: int = 0
     events: int = 0
+    skipped: int = 0
+    redactions: int = 0
+    tracked_files: int = 0
+    available_files: int = 0
     errors: int = 0
     last_error: str | None = None
     last_run_ts: str | None = None
@@ -45,7 +59,15 @@ class PeriodicTask:
         self.runs += 1
         self.last_run_ts = utc_now_iso()
         try:
-            self.events += self.run()
+            result = self.run()
+            if isinstance(result, CaptureRunResult):
+                self.events += result.events
+                self.skipped += result.skipped
+                self.redactions += result.redactions
+                self.tracked_files = result.tracked_files
+                self.available_files = result.available_files
+            else:
+                self.events += result
         except Exception as exc:  # noqa: BLE001 - one surface must not kill the daemon
             self.errors += 1
             self.last_error = f"{type(exc).__name__}: {exc}"
@@ -65,18 +87,36 @@ def build_tasks(
     ledger: Path,
     state: TailState,
     backfill: bool = False,
+    policy: CapturePolicy | None = None,
 ) -> list[PeriodicTask]:
     daemon_cfg = config.get("daemon") or {}
     tailer_cfg = daemon_cfg.get("tailers") or {}
     tasks: list[PeriodicTask] = []
+    capture_policy = policy or CapturePolicy.from_config(config.get("privacy"))
 
     def make_tailer_task(tailer: Any, interval: float) -> PeriodicTask:
-        def run() -> int:
+        def run() -> CaptureRunResult:
             events = tailer.poll(state)
+            saved = 0
+            skipped = 0
+            redactions = 0
             for event in events:
-                append_event(ledger, event)
+                decision = capture_policy.apply(event)
+                if not decision.accepted or decision.event is None:
+                    skipped += 1
+                    continue
+                append_event(ledger, decision.event)
+                saved += 1
+                redactions += decision.redaction_count
             state.save()
-            return len(events)
+            coverage = tailer.coverage(state)
+            return CaptureRunResult(
+                events=saved,
+                skipped=skipped,
+                redactions=redactions,
+                tracked_files=coverage["tracked_files"],
+                available_files=coverage["available_files"],
+            )
 
         return PeriodicTask(name=tailer.name, interval_seconds=interval, run=run)
 
@@ -107,6 +147,7 @@ def build_tasks(
                     ledger_path=ledger,
                     state_path=watch_state,
                     ignore_globs=ignore_globs,
+                    event_policy=lambda event: capture_policy.apply(event).event,
                 )
                 return 1 if saved else 0
 
@@ -131,12 +172,26 @@ def write_status(
         "updated_ts": utc_now_iso(),
         "ledger": str(ledger),
         "serve": serve_info,
+        "source_coverage": {
+            "enabled_sources": [task.name for task in tasks],
+            "source_count": len(tasks),
+            "healthy_source_count": sum(1 for task in tasks if task.errors == 0),
+            "events": sum(task.events for task in tasks),
+            "skipped": sum(task.skipped for task in tasks),
+            "redactions": sum(task.redactions for task in tasks),
+            "tracked_files": sum(task.tracked_files for task in tasks),
+            "available_files": sum(task.available_files for task in tasks),
+        },
         "tasks": [
             {
                 "name": task.name,
                 "interval_seconds": task.interval_seconds,
                 "runs": task.runs,
                 "events": task.events,
+                "skipped": task.skipped,
+                "redactions": task.redactions,
+                "tracked_files": task.tracked_files,
+                "available_files": task.available_files,
                 "errors": task.errors,
                 "last_error": task.last_error,
                 "last_run_ts": task.last_run_ts,
@@ -172,6 +227,7 @@ def run_daemon(
     cfg = config or load_global_config()
     ledger = resolve_ledger_path(cfg.get("ledger"))
     state = TailState(tail_state_path())
+    policy = CapturePolicy.from_config(cfg.get("privacy"))
     log = open_log(log_file)
 
     def emit(message: str) -> None:
@@ -197,6 +253,7 @@ def run_daemon(
                 token=token if isinstance(token, str) else None,
                 require_token=require_token,
                 allowed_origins=serve_cfg.get("allowed_origins"),
+                event_policy=lambda event: policy.apply(event).event,
             )
         except OSError as exc:
             emit(f"daemon: port {port} unavailable ({exc}); another daemon is likely running")
@@ -206,7 +263,7 @@ def run_daemon(
         serve_info = {"host": host, "port": port, "auth": "required" if require_token else "disabled"}
         emit(f"daemon: capture endpoint on http://{host}:{port}")
 
-    tasks = build_tasks(cfg, ledger=ledger, state=state, backfill=backfill)
+    tasks = build_tasks(cfg, ledger=ledger, state=state, backfill=backfill, policy=policy)
     if not tasks:
         emit("daemon: no capture tasks enabled; check ~/.rawmem/config.json")
         return 1

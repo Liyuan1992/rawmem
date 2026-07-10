@@ -9,6 +9,8 @@ $env:PYTHONPATH = "src"
 python -m compileall -q src tests scripts
 python -m unittest discover -s tests
 python scripts/open_source_audit.py
+python scripts/smoke_daemon.py
+python scripts/benchmark_ledger.py --events 1000000 --samples 30 --verify
 rawmem --version
 rawmem setup --global --install-startup --dry-run
 rawmem uninstall --dry-run
@@ -34,6 +36,10 @@ rawmem uninstall --dry-run
   tracked by Git.
 - Browser extension permissions are limited to context menus, active tab,
   scripting, storage, and localhost host permissions.
+- Cursor, Codex, and Claude Code fictional parity fixtures produce the same
+  event roles and provenance fields.
+- The one-million-event benchmark verifies the chain and keeps incremental
+  batch memory bounded.
 
 ## Current Non-Goals
 

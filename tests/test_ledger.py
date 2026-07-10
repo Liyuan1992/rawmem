@@ -15,6 +15,7 @@ from rawmem.ledger import (
     iter_events,
     read_events,
     resolve_ledger_path,
+    rotate_ledger,
     verify_ledger,
 )
 
@@ -138,6 +139,19 @@ class LedgerTests(unittest.TestCase):
             result = verify_ledger(ledger)
             self.assertTrue(result.valid, result.errors)
             self.assertEqual(result.event_count, 80)
+
+    def test_rotation_changes_identity_and_preserves_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "events.jsonl"
+            append_event(ledger, build_event(source="test", event_type="note", raw_text="before"))
+            cursor = iter_events(ledger).next_cursor
+            archive = Path(tmp) / "archive.jsonl"
+            result = rotate_ledger(ledger, destination=archive)
+            self.assertTrue(archive.exists())
+            self.assertNotEqual(result["archived_ledger_id"], result["new_ledger_id"])
+            recovery = iter_events(ledger, after_cursor=cursor)
+            self.assertEqual(recovery.cursor_status, "ledger_changed")
+            self.assertTrue(verify_ledger(archive).valid)
 
 
 if __name__ == "__main__":

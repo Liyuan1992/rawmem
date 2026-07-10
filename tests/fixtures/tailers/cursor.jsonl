@@ -1,0 +1,2 @@
+{"role":"user","message":{"role":"user","content":"Fictional Cursor request"},"sessionId":"cursor-fixture","timestamp":"2026-07-10T00:00:00Z"}
+{"role":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Fictional Cursor response"}]},"sessionId":"cursor-fixture","timestamp":"2026-07-10T00:00:01Z"}
