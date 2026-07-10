@@ -10,15 +10,20 @@ from typing import Any
 
 from . import __version__
 from .ledger import (
+    LedgerCursor,
     append_event,
     artifact_dir_for,
     build_event,
     file_artifact,
     init_local_store,
+    iter_events,
+    load_cursor,
     parse_key_value_pairs,
     read_events,
     resolve_ledger_path,
+    save_cursor,
     summarize,
+    verify_ledger,
 )
 from .config import (
     DEFAULT_GIT_HOOKS,
@@ -115,6 +120,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_sync_parser(sub)
     add_serve_parser(sub)
     add_bookmarklet_parser(sub)
+    add_verify_parser(sub)
+    add_export_parser(sub)
     add_tail_parser(sub)
     add_path_parser(sub)
     return parser
@@ -376,6 +383,29 @@ def add_bookmarklet_parser(sub: argparse._SubParsersAction[argparse.ArgumentPars
     parser.add_argument("--token", help="Browser capture token. Defaults to daemon.serve.token in global config.")
     parser.add_argument("--no-token", action="store_true", help="Generate a bookmarklet without an auth header.")
     parser.set_defaults(func=cmd_bookmarklet)
+
+
+def add_verify_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("verify", help="Verify JSON events and the complete ledger hash chain.")
+    add_common_store_args(parser)
+    parser.add_argument("--json", action="store_true", help="Print the versioned verification payload.")
+    parser.set_defaults(func=cmd_verify)
+
+
+def add_export_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("export", help="Incrementally export events using rawmem.cursor.v1.")
+    add_common_store_args(parser)
+    cursor = parser.add_mutually_exclusive_group()
+    cursor.add_argument("--cursor-file", help="Read and atomically update a cursor JSON file.")
+    cursor.add_argument("--after-cursor", help="Inline rawmem.cursor.v1 JSON object.")
+    parser.add_argument("--limit", type=int, help="Maximum matching events in this batch.")
+    parser.add_argument("--max-bytes", type=int, default=8 * 1024 * 1024, help="Maximum bytes scanned per batch.")
+    parser.add_argument("--source", action="append", default=[], help="Allowed source. Can be repeated.")
+    parser.add_argument("--type", dest="event_types", action="append", default=[], help="Allowed event type. Can be repeated.")
+    parser.add_argument("--project", action="append", default=[], help="Allowed project. Can be repeated.")
+    parser.add_argument("--output", help="Optional JSONL file for exported events.")
+    parser.add_argument("--events-only", action="store_true", help="Print event JSONL instead of the batch envelope.")
+    parser.set_defaults(func=cmd_export)
 
 
 def add_tail_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -885,6 +915,58 @@ def cmd_bookmarklet(args: argparse.Namespace) -> int:
         token = args.token or serve_cfg.get("token")
     print(build_bookmarklet(args.endpoint, token=token if isinstance(token, str) else None))
     return 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    ledger_path = resolve_ledger_path(args.ledger, local=args.local)
+    result = verify_ledger(ledger_path)
+    if args.json:
+        print(json.dumps(result.as_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+    elif result.valid:
+        print(
+            f"verified {result.event_count} event(s), {result.byte_size} bytes, "
+            f"ledger_id={result.ledger_id}, last={result.last_event_id or '-'}"
+        )
+    else:
+        print(f"FAILED: {len(result.errors)} error(s) in {ledger_path}")
+        for error in result.errors:
+            print(f"line {error.get('line', '?')}: {error.get('code')}: {error.get('message')}")
+    return 0 if result.valid else 1
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    ledger_path = resolve_ledger_path(args.ledger, local=args.local)
+    cursor: LedgerCursor | dict[str, Any] | None = None
+    if args.cursor_file:
+        cursor = load_cursor(args.cursor_file)
+    elif args.after_cursor:
+        value = json.loads(args.after_cursor)
+        if not isinstance(value, dict):
+            raise ValueError("--after-cursor must be a JSON object")
+        cursor = value
+    batch = iter_events(
+        ledger_path,
+        after_cursor=cursor,
+        sources=args.source or None,
+        event_types=args.event_types or None,
+        projects=args.project or None,
+        limit=args.limit,
+        max_bytes=args.max_bytes,
+    )
+    if args.cursor_file and batch.cursor_status == "ok" and batch.chain_status != "failed":
+        save_cursor(args.cursor_file, batch.next_cursor)
+    if args.output:
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("w", encoding="utf-8", newline="\n") as handle:
+            for event in batch.events:
+                handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+    if args.events_only:
+        for event in batch.events:
+            print(json.dumps(event, ensure_ascii=False, sort_keys=True))
+    else:
+        print(json.dumps(batch.as_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if batch.cursor_status == "ok" and batch.chain_status != "failed" else 1
 
 
 def cmd_tail(args: argparse.Namespace) -> int:

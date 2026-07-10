@@ -92,7 +92,15 @@ Inspect the ledger:
 rawmem tail --limit 10
 rawmem tail --source claude-code --limit 5
 rawmem tail --project rawmem --type agent_user_turn --json
+rawmem verify --json
+rawmem export --cursor-file .rawmem\consumer-cursor.json --limit 100
 ```
+
+`rawmem export` uses the stable `rawmem.cursor.v1` contract and never needs to
+load the whole ledger. Cursors bind to a ledger identity plus a byte offset and
+boundary hash, so truncation, replacement, or rotation is reported explicitly
+instead of silently skipping or duplicating evidence. See
+[docs/LEDGER_PROTOCOL.md](docs/LEDGER_PROTOCOL.md).
 
 Manual and scripted capture:
 

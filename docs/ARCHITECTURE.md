@@ -33,7 +33,9 @@ tailing its transcript is neither. So the priority order is:
 2. Source ledger
    - Raw event envelope
    - Artifact references
-   - Lightweight hash chain
+   - Cross-process locked appends and lightweight hash chain
+   - O(1)-steady-state last-hash sidecar
+   - Incremental `rawmem.cursor.v1` readers and full-chain verification
    - Local/private by default
 
 3. Derived layers

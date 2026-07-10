@@ -31,5 +31,7 @@ jobs:
           $ledger = Join-Path $env:RUNNER_TEMP "rawmem-smoke.jsonl"
           rawmem config --init
           rawmem capture --ledger $ledger --source ci --type smoke --text "windows smoke"
+          rawmem verify --ledger $ledger --json
+          rawmem export --ledger $ledger --cursor-file "$ledger.cursor.json" --limit 1
           rawmem tail --ledger $ledger --limit 1
           rawmem doctor --json
