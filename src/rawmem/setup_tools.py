@@ -228,13 +228,19 @@ def run_command(args: list[str]) -> str:
 
 
 STARTUP_TASK_NAME = "rawmem-daemon"
+STARTUP_TASK_ENV = "RAWMEM_STARTUP_TASK_NAME"
 
 
-def startup_task_exists(*, task_name: str = STARTUP_TASK_NAME) -> bool:
+def startup_task_name(task_name: str | None = None) -> str:
+    return task_name or os.environ.get(STARTUP_TASK_ENV) or STARTUP_TASK_NAME
+
+
+def startup_task_exists(*, task_name: str | None = None) -> bool:
     if not sys.platform.startswith("win"):
         return False
+    name = startup_task_name(task_name)
     result = subprocess.run(
-        ["schtasks", "/Query", "/TN", task_name],
+        ["schtasks", "/Query", "/TN", name],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -266,10 +272,11 @@ def generate_daemon_launcher() -> str:
     )
 
 
-def install_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
+def install_startup_task(*, task_name: str | None = None) -> str:
     """Register the daemon to start at logon via a hidden pythonw process."""
     if not sys.platform.startswith("win"):
         raise ValueError("startup registration is currently Windows-only")
+    name = startup_task_name(task_name)
     exe = Path(sys.executable)
     pythonw = exe.with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else exe
@@ -285,30 +292,32 @@ def install_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
             "/SC",
             "ONLOGON",
             "/TN",
-            task_name,
+            name,
             "/TR",
             command,
         ]
     )
-    return f"startup_task={task_name} -> {command}"
+    return f"startup_task={name} -> {command}"
 
 
-def uninstall_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
+def uninstall_startup_task(*, task_name: str | None = None) -> str:
     if not sys.platform.startswith("win"):
         return "skipped: startup task removal is Windows-only"
-    if not startup_task_exists(task_name=task_name):
-        return f"skipped: startup task {task_name} not found"
-    run_command(["schtasks", "/Delete", "/F", "/TN", task_name])
-    return f"startup_task_removed={task_name}"
+    name = startup_task_name(task_name)
+    if not startup_task_exists(task_name=name):
+        return f"skipped: startup task {name} not found"
+    run_command(["schtasks", "/Delete", "/F", "/TN", name])
+    return f"startup_task_removed={name}"
 
 
-def stop_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
+def stop_startup_task(*, task_name: str | None = None) -> str:
     if not sys.platform.startswith("win"):
         return "skipped: startup task stop is Windows-only"
-    if not startup_task_exists(task_name=task_name):
-        return f"skipped: startup task {task_name} not found"
+    name = startup_task_name(task_name)
+    if not startup_task_exists(task_name=name):
+        return f"skipped: startup task {name} not found"
     result = subprocess.run(
-        ["schtasks", "/End", "/TN", task_name],
+        ["schtasks", "/End", "/TN", name],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -316,13 +325,14 @@ def stop_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
         check=False,
     )
     if result.returncode != 0:
-        return f"skipped: startup task {task_name} was not running"
-    return f"startup_task_stopped={task_name}"
+        return f"skipped: startup task {name} was not running"
+    return f"startup_task_stopped={name}"
 
 
-def start_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
-    run_command(["schtasks", "/Run", "/TN", task_name])
-    return f"startup_task_started={task_name}"
+def start_startup_task(*, task_name: str | None = None) -> str:
+    name = startup_task_name(task_name)
+    run_command(["schtasks", "/Run", "/TN", name])
+    return f"startup_task_started={name}"
 
 
 def generate_powershell_profile_snippet() -> str:

@@ -30,7 +30,7 @@ Disk is cheap. Missing history is expensive.
 ## Install
 
 ```powershell
-git clone <your-fork-or-repo-url> rawmem
+git clone https://github.com/Liyuan1992/rawmem.git
 cd rawmem
 python -m pip install --user -e .
 ```

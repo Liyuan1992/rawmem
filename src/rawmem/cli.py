@@ -30,7 +30,6 @@ from .config import (
 from .daemon import read_status, run_daemon
 from .diagnostics import diagnostics_exit_code, render_diagnostics, run_diagnostics
 from .setup_tools import (
-    STARTUP_TASK_NAME,
     default_powershell_profile,
     git_config_get_global,
     global_git_hooks_dir,
@@ -41,6 +40,7 @@ from .setup_tools import (
     setup_project,
     start_startup_task,
     startup_task_exists,
+    startup_task_name,
     stop_startup_task,
     uninstall_global_git_hooks,
     uninstall_powershell_profile,
@@ -477,6 +477,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
 def plan_setup_actions(args: argparse.Namespace) -> list[str]:
     actions: list[str] = []
+    task_name = startup_task_name()
     clipboard_requested = args.include_clipboard or args.disable_clipboard
     global_requested = (
         args.global_setup
@@ -513,12 +514,12 @@ def plan_setup_actions(args: argparse.Namespace) -> list[str]:
         else:
             actions.append(f"skip git core.hooksPath: current value is '{current or ''}'")
     if args.install_startup:
-        actions.append(f"register Windows startup task {STARTUP_TASK_NAME}")
+        actions.append(f"register Windows startup task {task_name}")
     if args.uninstall_startup:
         state = "remove" if startup_task_exists() else "skip missing"
-        actions.append(f"{state} Windows startup task {STARTUP_TASK_NAME}")
+        actions.append(f"{state} Windows startup task {task_name}")
     if args.start_daemon:
-        actions.append(f"start Windows startup task {STARTUP_TASK_NAME}")
+        actions.append(f"start Windows startup task {task_name}")
     if global_requested and not (args.all or args.install_git_hooks or args.install_powershell_profile):
         return actions
 
@@ -554,9 +555,10 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     profile = Path(args.profile_path).expanduser() if args.profile_path else default_powershell_profile()
     home = global_config_path().parent
     if args.dry_run:
+        task_name = startup_task_name()
         task_state = "stop and remove" if startup_task_exists() else "skip missing"
         actions = [
-            f"{task_state} Windows startup task {STARTUP_TASK_NAME}",
+            f"{task_state} Windows startup task {task_name}",
             f"unset git core.hooksPath only if it points to {global_git_hooks_dir().resolve().as_posix()}",
             f"remove rawmem block from PowerShell profile {profile}",
             f"{'delete' if args.remove_home else 'preserve'} rawmem home {home}",

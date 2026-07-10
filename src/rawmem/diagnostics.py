@@ -14,7 +14,12 @@ from urllib.request import Request, urlopen
 from .config import default_global_config, global_config_path, load_global_config
 from .daemon import status_path
 from .ledger import resolve_ledger_path
-from .setup_tools import git_config_get_global, global_git_hooks_dir, startup_task_exists
+from .setup_tools import (
+    git_config_get_global,
+    global_git_hooks_dir,
+    startup_task_exists,
+    startup_task_name,
+)
 
 
 @dataclass(frozen=True)
@@ -87,8 +92,9 @@ def run_diagnostics(
         checks.append(DiagnosticCheck("capture endpoint", "WARN", "disabled in config"))
 
     if sys.platform.startswith("win"):
+        task_name = startup_task_name()
         if startup_task_exists():
-            checks.append(DiagnosticCheck("startup task", "PASS", "rawmem-daemon is registered"))
+            checks.append(DiagnosticCheck("startup task", "PASS", f"{task_name} is registered"))
         else:
             checks.append(
                 DiagnosticCheck(

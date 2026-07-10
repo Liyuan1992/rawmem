@@ -18,11 +18,21 @@ from rawmem.setup_tools import (
     generate_global_git_hook,
     install_global_git_hooks,
     remove_rawmem_home,
+    startup_task_name,
     uninstall_powershell_profile,
 )
 
 
 class GlobalGitHookTests(unittest.TestCase):
+    def test_startup_task_name_can_be_isolated_by_environment(self) -> None:
+        old_name = os.environ.get("RAWMEM_STARTUP_TASK_NAME")
+        os.environ["RAWMEM_STARTUP_TASK_NAME"] = "rawmem-release-smoke"
+        try:
+            self.assertEqual(startup_task_name(), "rawmem-release-smoke")
+            self.assertEqual(startup_task_name("explicit-name"), "explicit-name")
+        finally:
+            restore_env("RAWMEM_STARTUP_TASK_NAME", old_name)
+
     def test_hook_snapshots_then_chains_to_repo_hook(self) -> None:
         script = generate_global_git_hook("pre-push")
         self.assertTrue(script.startswith("#!/bin/sh"))
