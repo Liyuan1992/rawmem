@@ -65,6 +65,24 @@ class CaptureServerSecurityTests(unittest.TestCase):
         health = json.loads(urlopen(self.base_url + "/health", timeout=5).read().decode("utf-8"))
         self.assertEqual(health, {"ok": True, "auth": "required"})
 
+        check_request = Request(
+            self.base_url + "/check",
+            headers={"X-Rawmem-Token": "secret-token"},
+            method="GET",
+        )
+        check = json.loads(urlopen(check_request, timeout=5).read().decode("utf-8"))
+        self.assertEqual(check, {"ok": True, "authorized": True})
+
+    def test_connection_check_rejects_wrong_token(self) -> None:
+        request = Request(
+            self.base_url + "/check",
+            headers={"X-Rawmem-Token": "wrong-token"},
+            method="GET",
+        )
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(request, timeout=5)
+        self.assertEqual(caught.exception.code, 401)
+
     def test_cors_does_not_allow_arbitrary_web_origins(self) -> None:
         request = Request(
             self.base_url + "/capture",

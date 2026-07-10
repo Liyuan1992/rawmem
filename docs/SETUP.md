@@ -13,23 +13,32 @@ python -m pip install --user -e .
 # make sure the user Scripts dir is on PATH, e.g.
 # %APPDATA%\Python\Python312\Scripts
 
-# 2. Global config + global git hooks for every repository
+# 2. Preview every machine-level write (nothing is changed)
+rawmem setup --global --install-startup --dry-run
+
+# 3. Global config + global git hooks for every repository
 rawmem setup --global --yes
 
-# 3. Start the daemon at every logon (headless pythonw scheduled task)
+# 4. Start the daemon at every logon (headless pythonw scheduled task)
 rawmem setup --install-startup --yes
 rawmem setup --start-daemon   # start it right now
 
-# 4. Browser extension token
+# 5. Browser extension token
 rawmem config --show-browser-token
 ```
 
 Check that it is alive:
 
 ```powershell
+rawmem doctor
 rawmem daemon --status
 rawmem tail --limit 10
 ```
+
+`rawmem doctor` checks the effective config, ledger writability, daemon status
+freshness, localhost endpoint, token handshake, Windows startup task, global
+Git hooks, and recent events. Warnings do not fail the command by default;
+use `rawmem doctor --strict` when every optional integration is expected.
 
 ## Coverage Matrix
 
@@ -98,6 +107,9 @@ token from:
 rawmem config --show-browser-token
 ```
 
+Click **Test connection** in the options page. A successful test proves both
+that the daemon is reachable and that it accepts the configured token.
+
 Capture via:
 
 - right-click → "rawmem: save selection" / "rawmem: save page"
@@ -124,6 +136,28 @@ browser history scraper. The broad capture surfaces are opt-in and local:
 
 Pause everything: stop the daemon (`schtasks /End /TN rawmem-daemon` or kill
 the pythonw process). Pause git hooks temporarily: set `RAWMEM_DISABLE=1`.
+
+## Uninstall
+
+Preview the removal first:
+
+```powershell
+rawmem uninstall --dry-run
+```
+
+Disable the startup task, global Git hook setting, and rawmem PowerShell
+profile block while preserving all captured data:
+
+```powershell
+rawmem uninstall
+```
+
+Delete the local config, state, generated hooks, and ledger only when that is
+explicitly intended:
+
+```powershell
+rawmem uninstall --remove-home --yes
+```
 
 ## Legacy Per-Project Setup
 

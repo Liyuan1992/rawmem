@@ -67,14 +67,26 @@ ledger; only new content is captured. `--backfill` opts into history.
 
 ```text
 pip install --user -e .            # `rawmem` on PATH everywhere
+rawmem setup --global --install-startup --dry-run  # inspect planned writes
 rawmem setup --global --yes        # ~/.rawmem/config.json + global git hooks
 rawmem setup --install-startup --yes  # logon task running the daemon headless
+rawmem doctor                      # verify storage, daemon, token, and hooks
 ```
 
 Project-local `rawmem setup --all` still exists for per-repo stores, but the
 global daemon is the primary path. `setup --install-powershell-profile` is
 now mostly redundant: the PSReadLine history tailer covers shell commands
 passively.
+
+`rawmem uninstall` reverses the machine integrations while preserving the
+append-only ledger. Deleting `~/.rawmem` is a separate, confirmed action.
+
+## Operability Layer
+
+`diagnostics.py` checks the effective config, ledger writability, daemon status
+freshness, localhost health, token handshake, Windows startup task, global Git
+hook configuration, and recent ledger events. These checks inspect the source
+layer directly and do not promote or rewrite captured evidence.
 
 ## Coverage Strategy
 

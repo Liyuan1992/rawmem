@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible rawmem failure or regression.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not paste tokens, private ledger content, or unredacted local paths.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the command, expected result, and actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Diagnostic output
+      description: Paste redacted output from `rawmem doctor`.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: rawmem version
+      placeholder: rawmem 0.5.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows and Python version
+      placeholder: Windows 11, Python 3.12
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed tokens, secrets, private ledger text, and identifying local paths.
+          required: true

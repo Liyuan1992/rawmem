@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,10 @@ PROFILE_BEGIN = "# >>> rawmem shell capture >>>"
 PROFILE_END = "# <<< rawmem shell capture <<<"
 HOOK_BEGIN = "# >>> rawmem git hook >>>"
 HOOK_END = "# <<< rawmem git hook <<<"
+
+
+def global_git_hooks_dir() -> Path:
+    return default_home() / "git-hooks"
 
 
 def setup_project(
@@ -154,7 +159,7 @@ def install_global_git_hooks(
     repository's own .git/hooks/<name> when present. Repos that set a local
     core.hooksPath (e.g. husky) override the global value and are unaffected.
     """
-    target_dir = Path(hooks_dir) if hooks_dir else default_home() / "git-hooks"
+    target_dir = Path(hooks_dir) if hooks_dir else global_git_hooks_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
     runner_path = target_dir / "rawmem_git_hook_runner.py"
     runner_path.write_text(generate_python_runner(), encoding="utf-8")
@@ -186,7 +191,7 @@ def install_global_git_hooks(
 
 def uninstall_global_git_hooks() -> list[str]:
     current = git_config_get_global("core.hooksPath")
-    expected = (default_home() / "git-hooks").resolve().as_posix()
+    expected = global_git_hooks_dir().resolve().as_posix()
     if current != expected:
         return [f"skipped: core.hooksPath is '{current or ''}', not '{expected}'"]
     run_command(["git", "config", "--global", "--unset", "core.hooksPath"])
@@ -223,6 +228,20 @@ def run_command(args: list[str]) -> str:
 
 
 STARTUP_TASK_NAME = "rawmem-daemon"
+
+
+def startup_task_exists(*, task_name: str = STARTUP_TASK_NAME) -> bool:
+    if not sys.platform.startswith("win"):
+        return False
+    result = subprocess.run(
+        ["schtasks", "/Query", "/TN", task_name],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def generate_daemon_launcher() -> str:
@@ -275,8 +294,30 @@ def install_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
 
 
 def uninstall_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
+    if not sys.platform.startswith("win"):
+        return "skipped: startup task removal is Windows-only"
+    if not startup_task_exists(task_name=task_name):
+        return f"skipped: startup task {task_name} not found"
     run_command(["schtasks", "/Delete", "/F", "/TN", task_name])
     return f"startup_task_removed={task_name}"
+
+
+def stop_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
+    if not sys.platform.startswith("win"):
+        return "skipped: startup task stop is Windows-only"
+    if not startup_task_exists(task_name=task_name):
+        return f"skipped: startup task {task_name} not found"
+    result = subprocess.run(
+        ["schtasks", "/End", "/TN", task_name],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        return f"skipped: startup task {task_name} was not running"
+    return f"startup_task_stopped={task_name}"
 
 
 def start_startup_task(*, task_name: str = STARTUP_TASK_NAME) -> str:
@@ -350,6 +391,15 @@ def install_powershell_profile(profile_path: str | Path, *, force: bool = False)
     return path
 
 
+def uninstall_powershell_profile(profile_path: str | Path) -> str:
+    path = Path(profile_path).expanduser()
+    if not path.exists():
+        return f"skipped: PowerShell profile not found: {path}"
+    if not remove_marked_block(path, begin=PROFILE_BEGIN, end=PROFILE_END):
+        return f"skipped: rawmem block not found in PowerShell profile: {path}"
+    return f"powershell_profile_block_removed={path}"
+
+
 def upsert_marked_block(
     path: str | Path,
     block: str,
@@ -372,6 +422,32 @@ def upsert_marked_block(
             target.chmod(target.stat().st_mode | 0o111)
         except OSError:
             pass
+
+
+def remove_marked_block(path: str | Path, *, begin: str, end: str) -> bool:
+    target = Path(path)
+    existing = target.read_text(encoding="utf-8", errors="replace")
+    if begin not in existing or end not in existing:
+        return False
+    prefix, remainder = existing.split(begin, 1)
+    _, suffix = remainder.split(end, 1)
+    content = "\n\n".join(part.strip("\r\n") for part in (prefix, suffix) if part.strip())
+    target.write_text(content + ("\n" if content else ""), encoding="utf-8")
+    return True
+
+
+def remove_rawmem_home(path: str | Path | None = None) -> str:
+    target = (Path(path) if path else default_home()).expanduser().resolve()
+    home = Path.home().resolve()
+    anchor = Path(target.anchor).resolve()
+    if target in {home, anchor} or len(target.parts) < 3:
+        raise ValueError(f"refusing to remove unsafe rawmem home path: {target}")
+    if not target.exists():
+        return f"skipped: rawmem home not found: {target}"
+    if not target.is_dir():
+        raise ValueError(f"rawmem home is not a directory: {target}")
+    shutil.rmtree(target)
+    return f"rawmem_home_removed={target}"
 
 
 def default_powershell_profile() -> Path:

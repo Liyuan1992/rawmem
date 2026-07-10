@@ -42,10 +42,12 @@ works from any directory.
 ## One-Time Setup
 
 ```powershell
+rawmem setup --global --install-startup --dry-run  # inspect first; writes nothing
 rawmem setup --global --yes           # global config + git hooks for all repos
 rawmem setup --install-startup --yes  # run the daemon headless at every logon
 rawmem setup --start-daemon           # start it right now
 rawmem config --show-browser-token    # paste into the browser extension options
+rawmem doctor                         # verify the complete installation
 ```
 
 After this the daemon passively tails Claude Code sessions, Codex sessions,
@@ -67,10 +69,21 @@ Background capture (the primary path):
 ```powershell
 rawmem daemon              # run all background surfaces in one process
 rawmem daemon --status     # task counters, errors, last run times
+rawmem doctor              # config, storage, daemon, token, startup, hooks, events
+rawmem doctor --strict     # warnings also produce a nonzero exit code
 rawmem sync                # one manual tailer pass
 rawmem sync --backfill     # first run: also ingest existing history
 rawmem config --disable-clipboard
 rawmem config --rotate-browser-token
+```
+
+Preview or remove integrations:
+
+```powershell
+rawmem setup --global --install-startup --dry-run
+rawmem uninstall --dry-run
+rawmem uninstall                    # disables integrations; keeps ~/.rawmem
+rawmem uninstall --remove-home --yes  # also deletes the ledger and local state
 ```
 
 Inspect the ledger:
@@ -178,7 +191,9 @@ All adapters should emit the same event schema.
 - Background capture must be opt-in.
 - Clipboard polling is off by default.
 - Browser capture requires the local token created in `~/.rawmem/config.json`.
+- The extension options page can test daemon connectivity and token acceptance.
 - Machine-wide Git hook setup requires `--yes`.
+- `rawmem uninstall` preserves captured data unless `--remove-home --yes` is explicit.
 - Store raw events separately from reviewed or derived memory.
 - Prefer allowlists for browser/app capture.
 

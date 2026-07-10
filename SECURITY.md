@@ -25,7 +25,13 @@ Sensitive areas include:
   by default.
 - The HTTP capture endpoint does not expose the local ledger path in normal
   JSON responses.
+- The authenticated `/check` endpoint verifies browser-extension tokens
+  without returning the token or local storage paths.
 - Global machine changes require explicit commands.
+- `setup --dry-run` previews machine changes without writing config, hooks,
+  profiles, tasks, or ledgers.
+- `uninstall` preserves `~/.rawmem` unless destructive removal is confirmed
+  with `--remove-home --yes`.
 - Clipboard polling is disabled by default.
 - Raw captured events remain review-required; they are not accepted memory.
 
@@ -37,4 +43,5 @@ Before publishing a release:
 $env:PYTHONPATH = "src"
 python -m unittest discover -s tests
 python scripts/open_source_audit.py
+rawmem setup --global --install-startup --dry-run
 ```

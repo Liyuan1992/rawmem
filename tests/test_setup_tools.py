@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from rawmem.cli import main
 from rawmem.config import load_global_config
 from rawmem.ledger import read_events
-from rawmem.setup_tools import generate_global_git_hook, install_global_git_hooks
+from rawmem.setup_tools import (
+    PROFILE_BEGIN,
+    PROFILE_END,
+    generate_global_git_hook,
+    install_global_git_hooks,
+    remove_rawmem_home,
+    uninstall_powershell_profile,
+)
 
 
 class GlobalGitHookTests(unittest.TestCase):
@@ -70,6 +80,121 @@ class GlobalGitHookTests(unittest.TestCase):
             finally:
                 restore_env("RAWMEM_HOME", old_home)
                 restore_env("GIT_CONFIG_GLOBAL", old_git_config)
+
+    def test_global_setup_dry_run_does_not_write_or_require_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            rawmem_home = base / "rawmem-home"
+            git_config = base / "gitconfig"
+            old_home = os.environ.get("RAWMEM_HOME")
+            old_git_config = os.environ.get("GIT_CONFIG_GLOBAL")
+            os.environ["RAWMEM_HOME"] = str(rawmem_home)
+            os.environ["GIT_CONFIG_GLOBAL"] = str(git_config)
+            try:
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    code = main(["setup", "--global", "--install-startup", "--dry-run"])
+                self.assertEqual(code, 0)
+                self.assertIn("dry_run: write global config", out.getvalue())
+                self.assertIn("register Windows startup task", out.getvalue())
+                self.assertFalse(rawmem_home.exists())
+                self.assertFalse(git_config.exists())
+            finally:
+                restore_env("RAWMEM_HOME", old_home)
+                restore_env("GIT_CONFIG_GLOBAL", old_git_config)
+
+    def test_project_setup_dry_run_does_not_create_local_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(["setup", "--project-root", tmp, "--dry-run"])
+            self.assertEqual(code, 0)
+            self.assertIn("create local store", out.getvalue())
+            self.assertFalse((Path(tmp) / ".rawmem").exists())
+
+    def test_uninstall_dry_run_preserves_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rawmem_home = Path(tmp) / "rawmem-home"
+            rawmem_home.mkdir()
+            old_home = os.environ.get("RAWMEM_HOME")
+            os.environ["RAWMEM_HOME"] = str(rawmem_home)
+            try:
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    code = main(["uninstall", "--dry-run"])
+                self.assertEqual(code, 0)
+                self.assertIn(f"preserve rawmem home {rawmem_home}", out.getvalue())
+                self.assertTrue(rawmem_home.exists())
+            finally:
+                restore_env("RAWMEM_HOME", old_home)
+
+    def test_uninstall_command_preserves_home_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rawmem_home = Path(tmp) / "rawmem-home"
+            rawmem_home.mkdir()
+            (rawmem_home / "events.jsonl").write_text("private", encoding="utf-8")
+            old_home = os.environ.get("RAWMEM_HOME")
+            os.environ["RAWMEM_HOME"] = str(rawmem_home)
+            try:
+                with (
+                    mock.patch("rawmem.cli.stop_startup_task", return_value="startup stopped"),
+                    mock.patch("rawmem.cli.uninstall_startup_task", return_value="startup removed"),
+                    mock.patch("rawmem.cli.uninstall_global_git_hooks", return_value=["hooks removed"]),
+                    mock.patch("rawmem.cli.uninstall_powershell_profile", return_value="profile cleaned"),
+                ):
+                    self.assertEqual(main(["uninstall"]), 0)
+                self.assertTrue(rawmem_home.exists())
+                self.assertTrue((rawmem_home / "events.jsonl").exists())
+            finally:
+                restore_env("RAWMEM_HOME", old_home)
+
+    def test_uninstall_command_can_remove_home_after_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rawmem_home = Path(tmp) / "rawmem-home"
+            rawmem_home.mkdir()
+            old_home = os.environ.get("RAWMEM_HOME")
+            os.environ["RAWMEM_HOME"] = str(rawmem_home)
+            try:
+                with (
+                    mock.patch("rawmem.cli.stop_startup_task", return_value="startup stopped"),
+                    mock.patch("rawmem.cli.uninstall_startup_task", return_value="startup removed"),
+                    mock.patch("rawmem.cli.uninstall_global_git_hooks", return_value=["hooks removed"]),
+                    mock.patch("rawmem.cli.uninstall_powershell_profile", return_value="profile cleaned"),
+                ):
+                    self.assertEqual(main(["uninstall", "--remove-home", "--yes"]), 0)
+                self.assertFalse(rawmem_home.exists())
+            finally:
+                restore_env("RAWMEM_HOME", old_home)
+
+    def test_uninstall_remove_home_requires_confirmation(self) -> None:
+        self.assertEqual(main(["uninstall", "--remove-home"]), 1)
+
+    def test_remove_rawmem_home_deletes_only_requested_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            rawmem_home = base / "rawmem-home"
+            rawmem_home.mkdir()
+            (rawmem_home / "events.jsonl").write_text("private", encoding="utf-8")
+            sibling = base / "keep.txt"
+            sibling.write_text("keep", encoding="utf-8")
+            action = remove_rawmem_home(rawmem_home)
+            self.assertIn("rawmem_home_removed=", action)
+            self.assertFalse(rawmem_home.exists())
+            self.assertTrue(sibling.exists())
+
+    def test_uninstall_powershell_profile_removes_only_rawmem_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = Path(tmp) / "profile.ps1"
+            profile.write_text(
+                f"Write-Host before\n{PROFILE_BEGIN}\nrawmem code\n{PROFILE_END}\nWrite-Host after\n",
+                encoding="utf-8",
+            )
+            action = uninstall_powershell_profile(profile)
+            content = profile.read_text(encoding="utf-8")
+            self.assertIn("powershell_profile_block_removed=", action)
+            self.assertIn("Write-Host before", content)
+            self.assertIn("Write-Host after", content)
+            self.assertNotIn(PROFILE_BEGIN, content)
 
     def test_config_command_can_rotate_browser_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

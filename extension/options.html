@@ -7,8 +7,10 @@
       body { font-family: system-ui, sans-serif; padding: 16px; max-width: 480px; }
       label { display: block; margin-bottom: 4px; }
       input { width: 100%; padding: 6px; box-sizing: border-box; margin-bottom: 12px; }
-      button { margin-top: 12px; padding: 6px 16px; }
-      #status { margin-left: 8px; color: #2e7d32; }
+      .actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+      button { padding: 6px 16px; }
+      #status { margin-top: 10px; min-height: 20px; color: #2e7d32; }
+      #status.error { color: #c62828; }
     </style>
   </head>
   <body>
@@ -17,7 +19,11 @@
     <input id="endpoint" type="text" placeholder="http://127.0.0.1:8765/capture" />
     <label for="token">Capture token</label>
     <input id="token" type="password" autocomplete="off" />
-    <button id="save">Save</button><span id="status"></span>
+    <div class="actions">
+      <button id="save">Save</button>
+      <button id="test">Test connection</button>
+    </div>
+    <div id="status" role="status" aria-live="polite"></div>
     <script src="options.js"></script>
   </body>
 </html>

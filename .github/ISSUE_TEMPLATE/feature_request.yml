@@ -1,0 +1,33 @@
+name: Feature request
+description: Propose a capture adapter or operability improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Evidence that is currently lost
+      description: Describe the workflow and the raw evidence rawmem cannot preserve today.
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Available source
+      description: Does the tool expose logs, exports, hooks, plugins, or an API?
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy boundary
+      description: Explain how capture stays explicit, local, and inspectable.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: Product boundary
+      options:
+        - label: This request preserves raw evidence and does not auto-promote it into memory.
+          required: true

@@ -19,7 +19,7 @@ PRIVATE_PATH_PATTERNS = [
     re.compile(r"E:\\", re.IGNORECASE),
 ]
 
-PATH_SCAN_SUFFIXES = {".md", ".py", ".toml", ".json", ".js", ".html"}
+PATH_SCAN_SUFFIXES = {".md", ".py", ".toml", ".json", ".js", ".html", ".yml", ".yaml"}
 PRIVATE_PATH_ALLOWLIST_PREFIXES = {"tests/"}
 
 CODE_GUARDS = [

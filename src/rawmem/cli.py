@@ -20,16 +20,30 @@ from .ledger import (
     resolve_ledger_path,
     summarize,
 )
-from .config import ensure_capture_token, global_config_path, load_global_config, write_global_config
+from .config import (
+    DEFAULT_GIT_HOOKS,
+    ensure_capture_token,
+    global_config_path,
+    load_global_config,
+    write_global_config,
+)
 from .daemon import read_status, run_daemon
+from .diagnostics import diagnostics_exit_code, render_diagnostics, run_diagnostics
 from .setup_tools import (
+    STARTUP_TASK_NAME,
     default_powershell_profile,
+    git_config_get_global,
+    global_git_hooks_dir,
     install_global_git_hooks,
     install_powershell_profile,
     install_startup_task,
+    remove_rawmem_home,
     setup_project,
     start_startup_task,
+    startup_task_exists,
+    stop_startup_task,
     uninstall_global_git_hooks,
+    uninstall_powershell_profile,
     uninstall_startup_task,
 )
 from .watcher import watch_loop, watch_once
@@ -88,7 +102,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     add_init_parser(sub)
     add_setup_parser(sub)
+    add_uninstall_parser(sub)
     add_config_parser(sub)
+    add_doctor_parser(sub)
     add_capture_parser(sub)
     add_ingest_parser(sub)
     add_clip_parser(sub)
@@ -169,7 +185,21 @@ def add_setup_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     parser.add_argument("--profile-path", help="PowerShell profile path. Defaults to CurrentUser profile.")
     parser.add_argument("--force", action="store_true", help="Overwrite generated config/scripts blocks.")
     parser.add_argument("--yes", action="store_true", help="Confirm user-profile writes for non-interactive setup.")
+    parser.add_argument("--dry-run", action="store_true", help="Show planned changes without writing anything.")
     parser.set_defaults(func=cmd_setup)
+
+
+def add_uninstall_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("uninstall", help="Disable machine integrations while preserving captured data.")
+    parser.add_argument(
+        "--remove-home",
+        action="store_true",
+        help="Also delete ~/.rawmem, including the ledger. Requires --yes.",
+    )
+    parser.add_argument("--profile-path", help="PowerShell profile path. Defaults to CurrentUser profile.")
+    parser.add_argument("--yes", action="store_true", help="Confirm deletion of ~/.rawmem.")
+    parser.add_argument("--dry-run", action="store_true", help="Show planned changes without writing anything.")
+    parser.set_defaults(func=cmd_uninstall)
 
 
 def add_config_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -198,6 +228,20 @@ def add_config_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.add_argument("--path", action="store_true", help="Print the global config path.")
     parser.add_argument("--json", action="store_true", help="Print the effective global config as JSON.")
     parser.set_defaults(func=cmd_config)
+
+
+def add_doctor_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("doctor", help="Check config, storage, daemon, browser capture, and integrations.")
+    parser.add_argument("--strict", action="store_true", help="Return nonzero for warnings as well as failures.")
+    parser.add_argument("--json", action="store_true", help="Print machine-readable diagnostic results.")
+    parser.add_argument("--timeout", type=float, default=1.5, help="Local endpoint timeout in seconds.")
+    parser.add_argument(
+        "--status-max-age",
+        type=float,
+        default=30.0,
+        help="Maximum healthy daemon status age in seconds.",
+    )
+    parser.set_defaults(func=cmd_doctor)
 
 
 def add_capture_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -358,6 +402,13 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
+    if args.include_clipboard and args.disable_clipboard:
+        raise ValueError("--include-clipboard and --disable-clipboard cannot be used together")
+    if args.dry_run:
+        for action in plan_setup_actions(args):
+            print(f"dry_run: {action}")
+        return 0
+
     actions: list[str] = []
     clipboard_requested = args.include_clipboard or args.disable_clipboard
     global_requested = (
@@ -380,8 +431,6 @@ def cmd_setup(args: argparse.Namespace) -> int:
     if args.global_setup:
         if not args.yes:
             raise ValueError("--global writes machine-wide rawmem config and Git hooks; pass --yes to confirm")
-        if args.include_clipboard and args.disable_clipboard:
-            raise ValueError("--include-clipboard and --disable-clipboard cannot be used together")
         actions.append(
             "global_config="
             f"{write_global_config(force=args.force, include_clipboard=args.include_clipboard, disable_clipboard=args.disable_clipboard)}"
@@ -424,6 +473,121 @@ def cmd_setup(args: argparse.Namespace) -> int:
     for action in actions:
         print(action)
     return 0
+
+
+def plan_setup_actions(args: argparse.Namespace) -> list[str]:
+    actions: list[str] = []
+    clipboard_requested = args.include_clipboard or args.disable_clipboard
+    global_requested = (
+        args.global_setup
+        or args.install_global_git_hooks
+        or args.uninstall_global_git_hooks
+        or args.install_startup
+        or args.uninstall_startup
+        or args.start_daemon
+    )
+    config_path = global_config_path()
+    if clipboard_requested and not args.global_setup:
+        state = "enabled" if args.include_clipboard else "disabled"
+        actions.append(f"update global config {config_path}: clipboard={state}")
+        if not (args.all or args.install_git_hooks or args.install_powershell_profile):
+            return actions
+    if args.global_setup:
+        actions.append(f"write global config {config_path}")
+    if args.install_global_git_hooks or args.global_setup:
+        hooks_dir = global_git_hooks_dir().resolve()
+        desired = hooks_dir.as_posix()
+        current = git_config_get_global("core.hooksPath")
+        if current and current != desired and not args.force:
+            raise ValueError(
+                f"core.hooksPath is already set to '{current}'; rerun with --force to replace it"
+            )
+        actions.append(f"write global hook runner {hooks_dir / 'rawmem_git_hook_runner.py'}")
+        actions.extend(f"write global git hook {hooks_dir / hook}" for hook in DEFAULT_GIT_HOOKS)
+        actions.append(f"set git core.hooksPath={desired}")
+    if args.uninstall_global_git_hooks:
+        expected = global_git_hooks_dir().resolve().as_posix()
+        current = git_config_get_global("core.hooksPath")
+        if current == expected:
+            actions.append("unset git core.hooksPath")
+        else:
+            actions.append(f"skip git core.hooksPath: current value is '{current or ''}'")
+    if args.install_startup:
+        actions.append(f"register Windows startup task {STARTUP_TASK_NAME}")
+    if args.uninstall_startup:
+        state = "remove" if startup_task_exists() else "skip missing"
+        actions.append(f"{state} Windows startup task {STARTUP_TASK_NAME}")
+    if args.start_daemon:
+        actions.append(f"start Windows startup task {STARTUP_TASK_NAME}")
+    if global_requested and not (args.all or args.install_git_hooks or args.install_powershell_profile):
+        return actions
+
+    root = Path(args.project_root).resolve()
+    rawmem_dir = root / ".rawmem"
+    actions.append(f"create local store {rawmem_dir / 'events.jsonl'}")
+    config = rawmem_dir / "config.json"
+    if args.force or not config.exists():
+        actions.append(f"write project config {config}")
+    script_dir = rawmem_dir / "scripts"
+    actions.extend(
+        [
+            f"write PowerShell snippet {script_dir / 'rawmem-powershell-profile.ps1'}",
+            f"write watch script {script_dir / 'start-watch.ps1'}",
+            f"write browser bookmarklet {script_dir / 'browser-bookmarklet.txt'}",
+        ]
+    )
+    if args.install_git_hooks or args.all:
+        git_dir = root / ".git"
+        if not git_dir.exists():
+            raise ValueError(f"Not a git repository: {root}")
+        actions.append(f"write repo hook runner {git_dir / 'hooks' / 'rawmem_git_hook_runner.py'}")
+        actions.extend(f"write repo git hook {git_dir / 'hooks' / hook}" for hook in DEFAULT_GIT_HOOKS)
+    if args.install_powershell_profile:
+        profile = Path(args.profile_path).expanduser() if args.profile_path else default_powershell_profile()
+        actions.append(f"update PowerShell profile {profile}")
+    return actions
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    if args.remove_home and not (args.yes or args.dry_run):
+        raise ValueError("--remove-home deletes the ledger and requires --yes")
+    profile = Path(args.profile_path).expanduser() if args.profile_path else default_powershell_profile()
+    home = global_config_path().parent
+    if args.dry_run:
+        task_state = "stop and remove" if startup_task_exists() else "skip missing"
+        actions = [
+            f"{task_state} Windows startup task {STARTUP_TASK_NAME}",
+            f"unset git core.hooksPath only if it points to {global_git_hooks_dir().resolve().as_posix()}",
+            f"remove rawmem block from PowerShell profile {profile}",
+            f"{'delete' if args.remove_home else 'preserve'} rawmem home {home}",
+        ]
+        for action in actions:
+            print(f"dry_run: {action}")
+        return 0
+
+    actions = [stop_startup_task(), uninstall_startup_task()]
+    actions.extend(uninstall_global_git_hooks())
+    actions.append(uninstall_powershell_profile(profile))
+    if args.remove_home:
+        actions.append(remove_rawmem_home(home))
+    else:
+        actions.append(f"preserved_rawmem_home={home}")
+    for action in actions:
+        print(action)
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    if args.timeout <= 0:
+        raise ValueError("--timeout must be greater than zero")
+    if args.status_max_age <= 0:
+        raise ValueError("--status-max-age must be greater than zero")
+    checks = run_diagnostics(timeout=args.timeout, status_max_age=args.status_max_age)
+    if args.json:
+        print(json.dumps([check.as_dict() for check in checks], ensure_ascii=False, indent=2))
+    else:
+        print(render_diagnostics(checks))
+    return diagnostics_exit_code(checks, strict=args.strict)
 
 
 def cmd_config(args: argparse.Namespace) -> int:

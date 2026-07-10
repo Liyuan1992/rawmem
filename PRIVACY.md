@@ -50,6 +50,12 @@ Remove global Git hooks:
 rawmem setup --uninstall-global-git-hooks
 ```
 
+Remove all machine integrations while preserving the ledger:
+
+```powershell
+rawmem uninstall
+```
+
 Disable clipboard polling while keeping Git hook settings untouched:
 
 ```powershell
@@ -69,4 +75,8 @@ schtasks /End /TN rawmem-daemon
 rawmem setup --uninstall-startup
 ```
 
-Delete local data by removing `~/.rawmem/` after stopping the daemon.
+Delete local data only with an explicit confirmation:
+
+```powershell
+rawmem uninstall --remove-home --yes
+```

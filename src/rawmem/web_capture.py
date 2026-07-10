@@ -51,7 +51,7 @@ def create_capture_server(
     origins = allowed_origins or DEFAULT_ALLOWED_ORIGINS
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "rawmem-capture/0.4"
+        server_version = "rawmem-capture/0.5"
 
         def do_OPTIONS(self) -> None:  # noqa: N802
             self.send_response(204)
@@ -62,6 +62,12 @@ def create_capture_server(
             path = urlparse(self.path).path
             if path == "/health":
                 self._json({"ok": True, "auth": "required" if require_token else "disabled"})
+                return
+            if path == "/check":
+                if not self._authorized():
+                    self._json({"ok": False, "error": "unauthorized"}, status=401)
+                    return
+                self._json({"ok": True, "authorized": True})
                 return
             if path == "/bookmarklet":
                 if not self._authorized():

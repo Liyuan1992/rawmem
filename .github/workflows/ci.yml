@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install -e .
+      - name: Compile
+        run: python -m compileall -q src tests scripts
+      - name: Unit tests
+        run: python -m unittest discover -s tests
+      - name: Open-source audit
+        run: python scripts/open_source_audit.py
+      - name: CLI smoke test
+        shell: pwsh
+        run: |
+          $ledger = Join-Path $env:RUNNER_TEMP "rawmem-smoke.jsonl"
+          rawmem config --init
+          rawmem capture --ledger $ledger --source ci --type smoke --text "windows smoke"
+          rawmem tail --ledger $ledger --limit 1
+          rawmem doctor --json
