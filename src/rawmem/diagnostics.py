@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from .config import default_global_config, global_config_path, load_global_config
 from .daemon import status_path
-from .ledger import resolve_ledger_path
+from .ledger import iter_events, resolve_ledger_path
 from .setup_tools import (
     git_config_get_global,
     global_git_hooks_dir,
@@ -81,6 +81,10 @@ def run_diagnostics(
     checks.append(ledger_ready)
 
     checks.append(check_daemon_status(status_max_age=status_max_age))
+    checks.append(check_source_coverage())
+    checks.append(check_cursor_protocol(ledger) if ledger_ready.status != "FAIL" else DiagnosticCheck(
+        "cursor protocol", "FAIL", "ledger is not writable"
+    ))
 
     endpoint_ok = False
     if serve_enabled:
@@ -192,6 +196,48 @@ def check_daemon_status(*, status_max_age: float) -> DiagnosticCheck:
         "daemon status",
         "WARN",
         f"stale: updated {age:.0f}s ago (expected <= {status_max_age:.0f}s)",
+    )
+
+
+def check_source_coverage() -> DiagnosticCheck:
+    target = status_path()
+    if not target.exists():
+        return DiagnosticCheck("source coverage", "WARN", "daemon status is not available")
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+        coverage = data.get("source_coverage") or {}
+    except (OSError, json.JSONDecodeError):
+        return DiagnosticCheck("source coverage", "WARN", "daemon coverage is unreadable")
+    if not coverage:
+        return DiagnosticCheck("source coverage", "WARN", "daemon predates coverage metrics")
+    source_count = int(coverage.get("source_count", 0))
+    healthy = int(coverage.get("healthy_source_count", 0))
+    status = "PASS" if source_count > 0 and healthy == source_count else "WARN"
+    return DiagnosticCheck(
+        "source coverage",
+        status,
+        f"healthy {healthy}/{source_count}; tracked_files={coverage.get('tracked_files', 0)}; "
+        f"skipped={coverage.get('skipped', 0)}; redactions={coverage.get('redactions', 0)}",
+    )
+
+
+def check_cursor_protocol(ledger: Path) -> DiagnosticCheck:
+    if not ledger.exists():
+        return DiagnosticCheck("cursor protocol", "WARN", "ledger has not been created yet")
+    try:
+        batch = iter_events(ledger, limit=1)
+    except (OSError, ValueError) as exc:
+        return DiagnosticCheck("cursor protocol", "FAIL", str(exc))
+    if batch.cursor_status != "ok" or batch.chain_status == "failed":
+        return DiagnosticCheck(
+            "cursor protocol",
+            "FAIL",
+            f"cursor={batch.cursor_status}, chain={batch.chain_status}",
+        )
+    return DiagnosticCheck(
+        "cursor protocol",
+        "PASS",
+        f"ledger_id={batch.next_cursor.ledger_id}; chain={batch.chain_status}",
     )
 
 

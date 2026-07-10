@@ -61,6 +61,7 @@ class DaemonOnceTests(unittest.TestCase):
         daemon["serve"]["enabled"] = False
         daemon["tailers"]["claude_code"]["root"] = str(claude_root)
         daemon["tailers"]["codex"]["enabled"] = False
+        daemon["tailers"]["cursor"]["enabled"] = False
         daemon["tailers"]["powershell_history"]["enabled"] = False
         daemon["tailers"]["clipboard"]["enabled"] = False
         return config
@@ -96,6 +97,34 @@ class DaemonOnceTests(unittest.TestCase):
         status = json.loads((self.home / "daemon-status.json").read_text(encoding="utf-8"))
         self.assertEqual(status["ledger"], str(ledger))
         self.assertTrue(any(task["name"] == "claude-code" for task in status["tasks"]))
+        self.assertIn("source_coverage", status)
+        self.assertGreaterEqual(status["source_coverage"]["tracked_files"], 1)
+
+    def test_project_allowlist_skips_disallowed_tailer_events(self) -> None:
+        claude_root = self.home / "claude-projects"
+        project = claude_root / "blocked-project"
+        project.mkdir(parents=True)
+        transcript = project / "s.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"role": "user", "content": "should be skipped"},
+                    "cwd": str(project),
+                    "sessionId": "s1",
+                    "timestamp": "t",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        config = self._config(claude_root)
+        config["privacy"]["project_allowlist"] = ["allowed-*"]
+        self.assertEqual(run_daemon(once=True, serve=False, backfill=True, config=config), 0)
+        self.assertEqual(read_events(self.home / "events.jsonl"), [])
+        status = json.loads((self.home / "daemon-status.json").read_text(encoding="utf-8"))
+        claude = next(task for task in status["tasks"] if task["name"] == "claude-code")
+        self.assertEqual(claude["skipped"], 1)
 
     def test_watch_task_records_changes(self) -> None:
         claude_root = self.home / "claude-projects"

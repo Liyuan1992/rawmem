@@ -21,6 +21,7 @@ from .ledger import (
     parse_key_value_pairs,
     read_events,
     resolve_ledger_path,
+    rotate_ledger,
     save_cursor,
     summarize,
     verify_ledger,
@@ -34,6 +35,7 @@ from .config import (
 )
 from .daemon import read_status, run_daemon
 from .diagnostics import diagnostics_exit_code, render_diagnostics, run_diagnostics
+from .privacy import CapturePolicy
 from .setup_tools import (
     default_powershell_profile,
     git_config_get_global,
@@ -97,6 +99,14 @@ def report_error(message: str, *, exc: Exception | None = None) -> None:
         pass
 
 
+def append_cli_event(ledger_path: Path, event: dict[str, Any]) -> dict[str, Any]:
+    policy = CapturePolicy.from_config(load_global_config().get("privacy"))
+    decision = policy.apply(event)
+    if not decision.accepted or decision.event is None:
+        raise ValueError(f"capture rejected by privacy policy: {decision.reason}")
+    return append_event(ledger_path, decision.event)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rawmem",
@@ -122,6 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_bookmarklet_parser(sub)
     add_verify_parser(sub)
     add_export_parser(sub)
+    add_rotate_parser(sub)
     add_tail_parser(sub)
     add_path_parser(sub)
     return parser
@@ -408,6 +419,14 @@ def add_export_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.set_defaults(func=cmd_export)
 
 
+def add_rotate_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser("rotate", help="Archive the current ledger and start a new ledger identity.")
+    add_common_store_args(parser)
+    parser.add_argument("--destination", help="Explicit archive JSONL path.")
+    parser.add_argument("--yes", action="store_true", help="Confirm the rotation.")
+    parser.set_defaults(func=cmd_rotate)
+
+
 def add_tail_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("tail", help="Show recent events.")
     add_common_store_args(parser)
@@ -673,7 +692,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
         privacy_scope=args.privacy,
         review_required=not args.review_not_required,
     )
-    saved = append_event(ledger_path, event)
+    saved = append_cli_event(ledger_path, event)
     print_result(saved, ledger_path)
     return 0
 
@@ -691,7 +710,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     last_saved: dict[str, Any] | None = None
     for item in payloads:
         event = event_from_adapter_payload(item, cwd=cwd)
-        last_saved = append_event(ledger_path, event)
+        last_saved = append_cli_event(ledger_path, event)
         count += 1
     if last_saved:
         print(f"{count} event(s) -> {ledger_path}; last={last_saved['event_id']}")
@@ -723,7 +742,7 @@ def cmd_clip(args: argparse.Namespace) -> int:
         tags=args.tag,
         payload=payload,
     )
-    saved = append_event(ledger_path, event)
+    saved = append_cli_event(ledger_path, event)
     print_result(saved, ledger_path)
     return 0
 
@@ -782,7 +801,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             stderr_path = output_dir / "stderr.txt"
             stderr_path.write_text(result.stderr, encoding="utf-8")
             event["artifacts"].append(file_artifact(stderr_path, kind="stderr"))
-    saved = append_event(ledger_path, event)
+    saved = append_cli_event(ledger_path, event)
 
     print_result(saved, ledger_path, stream=sys.stderr if result.returncode else sys.stdout)
     return result.returncode
@@ -834,13 +853,14 @@ def cmd_git_snapshot(args: argparse.Namespace) -> int:
         diff_path = event_dir / "diff.patch"
         diff_path.write_text(git(["diff"], cwd), encoding="utf-8")
         event["artifacts"].append(file_artifact(diff_path, kind="git_diff"))
-    saved = append_event(ledger_path, event)
+    saved = append_cli_event(ledger_path, event)
     print_result(saved, ledger_path)
     return 0
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    policy = CapturePolicy.from_config(load_global_config().get("privacy"))
     if args.once:
         saved = watch_once(
             root=root,
@@ -849,6 +869,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
             project=args.project,
             state_path=args.state,
             ignore_globs=None if not args.ignore else args.ignore,
+            event_policy=lambda event: policy.apply(event).event,
         )
         if saved:
             print_result(saved, resolve_ledger_path(args.ledger, local=args.local, cwd=root))
@@ -863,6 +884,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         interval_seconds=args.interval,
         state_path=args.state,
         ignore_globs=None if not args.ignore else args.ignore,
+        event_policy=lambda event: policy.apply(event).event,
     )
     return 0
 
@@ -889,6 +911,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     config = load_global_config()
+    policy = CapturePolicy.from_config(config.get("privacy"))
     serve_cfg = (config.get("daemon") or {}).get("serve") or {}
     require_token = not args.no_token
     token = args.token or serve_cfg.get("token")
@@ -903,6 +926,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         token=token if isinstance(token, str) else None,
         require_token=require_token,
         allowed_origins=args.allow_origin or serve_cfg.get("allowed_origins"),
+        event_policy=lambda event: policy.apply(event).event,
     )
     return 0
 
@@ -967,6 +991,15 @@ def cmd_export(args: argparse.Namespace) -> int:
     else:
         print(json.dumps(batch.as_dict(), ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if batch.cursor_status == "ok" and batch.chain_status != "failed" else 1
+
+
+def cmd_rotate(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise ValueError("ledger rotation requires --yes")
+    ledger_path = resolve_ledger_path(args.ledger, local=args.local)
+    result = rotate_ledger(ledger_path, destination=args.destination)
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
 
 
 def cmd_tail(args: argparse.Namespace) -> int:

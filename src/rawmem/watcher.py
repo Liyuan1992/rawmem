@@ -4,7 +4,7 @@ import fnmatch
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .config import DEFAULT_IGNORE_GLOBS
 from .ledger import append_event, build_event, resolve_ledger_path
@@ -90,6 +90,7 @@ def watch_once(
     state_path: str | Path | None = None,
     ignore_globs: list[str] | None = None,
     source: str = "file-watch",
+    event_policy: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any] | None:
     base = Path(root).resolve()
     ledger = resolve_ledger_path(ledger_path, local=local, cwd=base)
@@ -110,6 +111,10 @@ def watch_once(
             tags=["watch", "baseline"],
             payload={"root": str(base), "file_count": len(current)},
         )
+        if event_policy is not None:
+            event = event_policy(event)
+            if event is None:
+                return None
         return append_event(ledger, event)
 
     changes = diff_snapshots(previous, current)
@@ -141,6 +146,10 @@ def watch_once(
         tags=["watch"],
         payload={"root": str(base), "changes": changes},
     )
+    if event_policy is not None:
+        event = event_policy(event)
+        if event is None:
+            return None
     return append_event(ledger, event)
 
 
@@ -154,6 +163,7 @@ def watch_loop(
     state_path: str | Path | None = None,
     ignore_globs: list[str] | None = None,
     source: str = "file-watch",
+    event_policy: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> None:
     while True:
         watch_once(
@@ -164,5 +174,6 @@ def watch_loop(
             state_path=state_path,
             ignore_globs=ignore_globs,
             source=source,
+            event_policy=event_policy,
         )
         time.sleep(interval_seconds)

@@ -205,6 +205,36 @@ class CliTests(unittest.TestCase):
             second = json.loads(out.getvalue())
             self.assertEqual([event["raw_text"] for event in second["events"]], ["two"])
 
+    def test_rotate_requires_confirmation_and_archives(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "events.jsonl"
+            archive = Path(tmp) / "archive.jsonl"
+            self.assertEqual(main(["capture", "--ledger", str(ledger), "--text", "before"]), 0)
+            self.assertEqual(
+                main(["rotate", "--ledger", str(ledger), "--destination", str(archive)]),
+                1,
+            )
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(
+                    main(
+                        [
+                            "rotate",
+                            "--ledger",
+                            str(ledger),
+                            "--destination",
+                            str(archive),
+                            "--yes",
+                        ]
+                    ),
+                    0,
+                )
+            self.assertTrue(archive.exists())
+            self.assertNotEqual(
+                json.loads(out.getvalue())["archived_ledger_id"],
+                json.loads(out.getvalue())["new_ledger_id"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

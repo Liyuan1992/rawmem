@@ -9,11 +9,14 @@ from rawmem.clipboard import ClipboardTailer
 from rawmem.tailers import (
     ClaudeCodeTailer,
     CodexTailer,
+    CursorTailer,
     PowerShellHistoryTailer,
     TailState,
     join_continuations,
     read_new_lines,
 )
+
+FIXTURES = Path(__file__).parent / "fixtures" / "tailers"
 
 
 def claude_line(kind: str, text, *, sidechain: bool = False, meta: bool = False) -> str:
@@ -183,6 +186,88 @@ class CodexTailerTests(unittest.TestCase):
             events = tailer.poll(state)
             self.assertEqual(len(events), 1)
             self.assertEqual(events[0]["project"], "alpha")
+
+
+class CursorTailerTests(unittest.TestCase):
+    def test_parses_cursor_agent_transcripts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects"
+            transcript_dir = root / "fictional-project" / "agent-transcripts" / "session"
+            transcript_dir.mkdir(parents=True)
+            transcript = transcript_dir / "cursor-fixture.jsonl"
+            transcript.write_text(
+                (FIXTURES / "cursor.jsonl").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            state = TailState(Path(tmp) / "state.json")
+            events = CursorTailer(root=root, backfill=True).poll(state)
+            self.assertEqual(len(events), 2)
+            self.assertEqual(events[0]["source"], "cursor")
+            self.assertEqual(events[0]["project"], "fictional-project")
+            self.assertEqual(events[0]["event_type"], "agent_user_turn")
+            self.assertEqual(events[0]["payload"]["session_id"], "cursor-fixture")
+            self.assertEqual(events[1]["event_type"], "agent_assistant_turn")
+
+    def test_baseline_then_incremental(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects"
+            transcript_dir = root / "fictional" / "agent-transcripts"
+            transcript_dir.mkdir(parents=True)
+            transcript = transcript_dir / "session.jsonl"
+            transcript.write_text(
+                json.dumps({"role": "user", "message": {"content": "old"}}) + "\n",
+                encoding="utf-8",
+            )
+            state = TailState(Path(tmp) / "state.json")
+            tailer = CursorTailer(root=root)
+            self.assertEqual(tailer.poll(state), [])
+            with transcript.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps({"role": "user", "message": {"content": "new"}}) + "\n"
+                )
+            events = tailer.poll(state)
+            self.assertEqual([event["raw_text"] for event in events], ["new"])
+
+
+class AgentTailerParityTests(unittest.TestCase):
+    def test_claude_codex_cursor_share_the_event_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            claude_root = base / "claude"
+            (claude_root / "fictional").mkdir(parents=True)
+            (claude_root / "fictional" / "session.jsonl").write_text(
+                (FIXTURES / "claude-code.jsonl").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            codex_root = base / "codex"
+            codex_root.mkdir()
+            (codex_root / "rollout.jsonl").write_text(
+                (FIXTURES / "codex.jsonl").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            cursor_root = base / "cursor"
+            cursor_dir = cursor_root / "fictional" / "agent-transcripts"
+            cursor_dir.mkdir(parents=True)
+            (cursor_dir / "session.jsonl").write_text(
+                (FIXTURES / "cursor.jsonl").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            cases = [
+                ClaudeCodeTailer(root=claude_root, backfill=True),
+                CodexTailer(root=codex_root, backfill=True),
+                CursorTailer(root=cursor_root, backfill=True),
+            ]
+            for index, tailer in enumerate(cases):
+                events = tailer.poll(TailState(base / f"state-{index}.json"))
+                self.assertEqual([event["event_type"] for event in events], [
+                    "agent_user_turn",
+                    "agent_assistant_turn",
+                ])
+                for event in events:
+                    self.assertEqual(event["schema"], "rawmem.event.v1")
+                    self.assertTrue(event["payload"].get("session_id"))
+                    self.assertIn("transcript", event["payload"])
+                    self.assertIn("truncated", event["payload"])
 
 
 class PowerShellHistoryTailerTests(unittest.TestCase):

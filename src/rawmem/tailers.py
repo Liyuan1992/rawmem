@@ -127,6 +127,12 @@ class FileTailer:
         tstate["initialized"] = True
         return events
 
+    def coverage(self, state: TailState) -> dict[str, int]:
+        files = state.tailer(self.name).get("files") or {}
+        tracked = len(files)
+        available = sum(1 for path in files if Path(path).is_file())
+        return {"tracked_files": tracked, "available_files": available}
+
 
 def _extract_text_blocks(content: Any) -> str:
     if isinstance(content, str):
@@ -290,6 +296,82 @@ class CodexTailer(FileTailer):
         )
 
 
+class CursorTailer(FileTailer):
+    """Tail Cursor agent transcripts under ~/.cursor/projects."""
+
+    name = "cursor"
+
+    def __init__(
+        self,
+        *,
+        root: str | Path | None = None,
+        include_assistant: bool = True,
+        max_chars: int = 6000,
+        backfill: bool = False,
+    ) -> None:
+        super().__init__(backfill=backfill)
+        self.root = Path(root) if root else Path.home() / ".cursor" / "projects"
+        self.include_assistant = include_assistant
+        self.max_chars = max_chars
+
+    def discover(self) -> Iterable[Path]:
+        if not self.root.is_dir():
+            return []
+        paths: list[Path] = []
+        for project_dir in self.root.iterdir():
+            transcripts = project_dir / "agent-transcripts"
+            if transcripts.is_dir():
+                paths.extend(transcripts.rglob("*.jsonl"))
+        return sorted(paths)
+
+    def register_file(self, path: Path, entry: dict[str, Any]) -> None:
+        project_dir = next(
+            (parent for parent in path.parents if parent.parent == self.root),
+            None,
+        )
+        entry["meta"]["project"] = project_dir.name if project_dir else path.parent.name
+        entry["meta"]["session_id"] = path.stem
+
+    def parse_line(self, line: str, entry: dict[str, Any], path: Path) -> dict[str, Any] | None:
+        data = json.loads(line)
+        if not isinstance(data, dict):
+            return None
+        message = data.get("message") if isinstance(data.get("message"), dict) else data
+        role = str(data.get("role") or message.get("role") or "").lower()
+        if role not in ("user", "assistant"):
+            return None
+        if role == "assistant" and not self.include_assistant:
+            return None
+        text = _extract_text_blocks(message.get("content"))
+        if not text.strip():
+            return None
+        truncated = len(text) > self.max_chars
+        text = text[: self.max_chars]
+        project = str(entry["meta"].get("project") or "unknown")
+        session_id = (
+            data.get("sessionId")
+            or data.get("session_id")
+            or message.get("sessionId")
+            or entry["meta"].get("session_id")
+        )
+        return build_event(
+            source="cursor",
+            event_type=f"agent_{role}_turn",
+            project=project,
+            cwd=Path.home(),
+            summary=summarize(text),
+            raw_text=text,
+            tags=["agent", "cursor"],
+            payload={
+                "session_id": session_id,
+                "orig_ts": data.get("timestamp") or data.get("ts") or message.get("timestamp"),
+                "transcript": str(path),
+                "workspace_key": project,
+                "truncated": truncated,
+            },
+        )
+
+
 class PowerShellHistoryTailer(FileTailer):
     """Tail the PSReadLine history file; covers every shell with no profile edit."""
 
@@ -410,6 +492,16 @@ def build_tailers_from_config(
                 root=codex_cfg.get("root"),
                 include_assistant=codex_cfg.get("include_assistant", True),
                 max_chars=int(codex_cfg.get("max_chars", 6000)),
+                backfill=backfill,
+            )
+        )
+    cursor_cfg = tailer_config.get("cursor") or {}
+    if cursor_cfg.get("enabled", True):
+        tailers.append(
+            CursorTailer(
+                root=cursor_cfg.get("root"),
+                include_assistant=cursor_cfg.get("include_assistant", True),
+                max_chars=int(cursor_cfg.get("max_chars", 6000)),
                 backfill=backfill,
             )
         )

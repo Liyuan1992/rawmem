@@ -124,5 +124,40 @@ class CaptureServerSecurityTests(unittest.TestCase):
         )
 
 
+class CaptureServerPolicyTests(unittest.TestCase):
+    def test_capture_policy_can_reject_before_append(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "events.jsonl"
+            server = create_capture_server(
+                host="127.0.0.1",
+                port=0,
+                ledger_path=ledger,
+                token="secret-token",
+                require_token=True,
+                event_policy=lambda _event: None,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            host, port = server.server_address
+            try:
+                request = Request(
+                    f"http://{host}:{port}/capture",
+                    data=json.dumps({"source": "unit", "raw_text": "blocked"}).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Rawmem-Token": "secret-token",
+                    },
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as caught:
+                    urlopen(request, timeout=5)
+                self.assertEqual(caught.exception.code, 403)
+                self.assertEqual(read_events(ledger), [])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+
 if __name__ == "__main__":
     unittest.main()

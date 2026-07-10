@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"Fictional Claude request"},"cwd":"D:\\Dev\\Projects\\fictional","sessionId":"claude-fixture","uuid":"claude-turn-1","timestamp":"2026-07-10T00:00:00Z","gitBranch":"main"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Fictional Claude response"}]},"cwd":"D:\\Dev\\Projects\\fictional","sessionId":"claude-fixture","uuid":"claude-turn-2","timestamp":"2026-07-10T00:00:01Z","gitBranch":"main"}

@@ -1,0 +1,3 @@
+{"timestamp":"2026-07-10T00:00:00Z","type":"session_meta","payload":{"id":"codex-fixture","cwd":"D:\\Dev\\Projects\\fictional"}}
+{"timestamp":"2026-07-10T00:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"Fictional Codex request"}}
+{"timestamp":"2026-07-10T00:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"Fictional Codex response"}}

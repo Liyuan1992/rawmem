@@ -10,10 +10,12 @@ from .ledger import (
     append_event,
     iter_events,
     ledger_identity,
+    rotate_ledger,
     verify_ledger,
 )
+from .privacy import CaptureDecision, CapturePolicy
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 __all__ = [
     "SCHEMA",
@@ -25,6 +27,9 @@ __all__ = [
     "append_event",
     "iter_events",
     "ledger_identity",
+    "rotate_ledger",
     "verify_ledger",
+    "CaptureDecision",
+    "CapturePolicy",
     "__version__",
 ]
