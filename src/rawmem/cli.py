@@ -9,6 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .archive import (
+    iter_archive_events,
+    list_archives,
+    seal_ledger,
+    verify_sealed_archive,
+)
+from .archive_format import assert_active_ledger
 from .ledger import (
     LedgerCursor,
     append_event,
@@ -21,11 +28,11 @@ from .ledger import (
     parse_key_value_pairs,
     read_events,
     resolve_ledger_path,
-    rotate_ledger,
     save_cursor,
     summarize,
     verify_ledger,
 )
+from .projection import EVENT_PROJECTIONS, project_event
 from .config import (
     DEFAULT_GIT_HOOKS,
     ensure_capture_token,
@@ -61,7 +68,10 @@ def main(argv: list[str] | None = None) -> int:
     # Windows consoles often default to a legacy codepage; ledger content is
     # UTF-8 and may be CJK, so emit UTF-8 instead of crashing or garbling.
     for stream in (sys.stdout, sys.stderr):
-        if stream is not None and (stream.encoding or "").lower() not in ("utf-8", "utf8"):
+        if stream is not None and (stream.encoding or "").lower() not in (
+            "utf-8",
+            "utf8",
+        ):
             try:
                 stream.reconfigure(encoding="utf-8", errors="replace")
             except (AttributeError, OSError):
@@ -132,7 +142,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_bookmarklet_parser(sub)
     add_verify_parser(sub)
     add_export_parser(sub)
+    add_seal_parser(sub)
     add_rotate_parser(sub)
+    add_archives_parser(sub)
     add_tail_parser(sub)
     add_path_parser(sub)
     return parser
@@ -140,20 +152,50 @@ def build_parser() -> argparse.ArgumentParser:
 
 def add_common_store_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ledger", help="Explicit JSONL ledger path.")
-    parser.add_argument("--local", action="store_true", help="Use .rawmem/events.jsonl in the current directory.")
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Use .rawmem/events.jsonl in the current directory.",
+    )
+
+
+def add_query_store_args(parser: argparse.ArgumentParser) -> None:
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--ledger", help="Explicit active JSONL ledger path.")
+    target.add_argument(
+        "--local",
+        action="store_true",
+        help="Use the current directory's active ledger.",
+    )
+    target.add_argument(
+        "--archive",
+        help="Explicit sealed archive JSONL path. Archives are never searched implicitly.",
+    )
 
 
 def add_init_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("init", help="Create a local .rawmem store.")
-    parser.add_argument("--local", action="store_true", help="Accepted for symmetry; init always creates .rawmem.")
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Accepted for symmetry; init always creates .rawmem.",
+    )
     parser.set_defaults(func=cmd_init)
 
 
 def add_setup_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("setup", help="One-time local setup for broader background capture.")
-    parser.add_argument("--project-root", default=".", help="Project root to configure.")
-    parser.add_argument("--all", action="store_true", help="Enable config, scripts, and git hooks.")
-    parser.add_argument("--install-git-hooks", action="store_true", help="Install repo-local git hooks.")
+    parser = sub.add_parser(
+        "setup", help="One-time local setup for broader background capture."
+    )
+    parser.add_argument(
+        "--project-root", default=".", help="Project root to configure."
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="Enable config, scripts, and git hooks."
+    )
+    parser.add_argument(
+        "--install-git-hooks", action="store_true", help="Install repo-local git hooks."
+    )
     parser.add_argument(
         "--global",
         dest="global_setup",
@@ -200,29 +242,61 @@ def add_setup_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         action="store_true",
         help="Install the shell capture snippet into the current user's PowerShell profile.",
     )
-    parser.add_argument("--profile-path", help="PowerShell profile path. Defaults to CurrentUser profile.")
-    parser.add_argument("--force", action="store_true", help="Overwrite generated config/scripts blocks.")
-    parser.add_argument("--yes", action="store_true", help="Confirm user-profile writes for non-interactive setup.")
-    parser.add_argument("--dry-run", action="store_true", help="Show planned changes without writing anything.")
+    parser.add_argument(
+        "--profile-path",
+        help="PowerShell profile path. Defaults to CurrentUser profile.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite generated config/scripts blocks.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm user-profile writes for non-interactive setup.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show planned changes without writing anything.",
+    )
     parser.set_defaults(func=cmd_setup)
 
 
-def add_uninstall_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("uninstall", help="Disable machine integrations while preserving captured data.")
+def add_uninstall_parser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    parser = sub.add_parser(
+        "uninstall", help="Disable machine integrations while preserving captured data."
+    )
     parser.add_argument(
         "--remove-home",
         action="store_true",
         help="Also delete ~/.rawmem, including the ledger. Requires --yes.",
     )
-    parser.add_argument("--profile-path", help="PowerShell profile path. Defaults to CurrentUser profile.")
-    parser.add_argument("--yes", action="store_true", help="Confirm deletion of ~/.rawmem.")
-    parser.add_argument("--dry-run", action="store_true", help="Show planned changes without writing anything.")
+    parser.add_argument(
+        "--profile-path",
+        help="PowerShell profile path. Defaults to CurrentUser profile.",
+    )
+    parser.add_argument(
+        "--yes", action="store_true", help="Confirm deletion of ~/.rawmem."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show planned changes without writing anything.",
+    )
     parser.set_defaults(func=cmd_uninstall)
 
 
 def add_config_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("config", help="Manage the global daemon config without installing hooks.")
-    parser.add_argument("--init", action="store_true", help="Create or refresh ~/.rawmem/config.json.")
+    parser = sub.add_parser(
+        "config", help="Manage the global daemon config without installing hooks."
+    )
+    parser.add_argument(
+        "--init", action="store_true", help="Create or refresh ~/.rawmem/config.json."
+    )
     parser.add_argument(
         "--include-clipboard",
         action="store_true",
@@ -243,16 +317,31 @@ def add_config_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
         action="store_true",
         help="Rotate the browser capture token and print the new value.",
     )
-    parser.add_argument("--path", action="store_true", help="Print the global config path.")
-    parser.add_argument("--json", action="store_true", help="Print the effective global config as JSON.")
+    parser.add_argument(
+        "--path", action="store_true", help="Print the global config path."
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Print the effective global config as JSON."
+    )
     parser.set_defaults(func=cmd_config)
 
 
 def add_doctor_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("doctor", help="Check config, storage, daemon, browser capture, and integrations.")
-    parser.add_argument("--strict", action="store_true", help="Return nonzero for warnings as well as failures.")
-    parser.add_argument("--json", action="store_true", help="Print machine-readable diagnostic results.")
-    parser.add_argument("--timeout", type=float, default=1.5, help="Local endpoint timeout in seconds.")
+    parser = sub.add_parser(
+        "doctor",
+        help="Check config, storage, daemon, browser capture, and integrations.",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Return nonzero for warnings as well as failures.",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable diagnostic results."
+    )
+    parser.add_argument(
+        "--timeout", type=float, default=1.5, help="Local endpoint timeout in seconds."
+    )
     parser.add_argument(
         "--status-max-age",
         type=float,
@@ -262,19 +351,46 @@ def add_doctor_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
     parser.set_defaults(func=cmd_doctor)
 
 
-def add_capture_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+def add_capture_parser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     parser = sub.add_parser("capture", help="Append a raw evidence event.")
     add_common_store_args(parser)
-    parser.add_argument("--source", default="manual", help="Event source, e.g. codex, claude, browser, git.")
-    parser.add_argument("--type", dest="event_type", default="note", help="Event type, e.g. task_note, bug_fix.")
-    parser.add_argument("--project", help="Project name. Defaults to git root or cwd name.")
+    parser.add_argument(
+        "--source",
+        default="manual",
+        help="Event source, e.g. codex, claude, browser, git.",
+    )
+    parser.add_argument(
+        "--type",
+        dest="event_type",
+        default="note",
+        help="Event type, e.g. task_note, bug_fix.",
+    )
+    parser.add_argument(
+        "--project", help="Project name. Defaults to git root or cwd name."
+    )
     parser.add_argument("--cwd", help="Working directory to store in the event.")
     parser.add_argument("--summary", help="Short event summary.")
     parser.add_argument("--text", help="Raw text to store.")
-    parser.add_argument("--stdin", action="store_true", help="Read raw text from stdin.")
-    parser.add_argument("--tag", action="append", default=[], help="Tag. Can be repeated.")
-    parser.add_argument("--artifact", action="append", default=[], help="Artifact path. Can be repeated.")
-    parser.add_argument("--field", action="append", default=[], help="Payload field as KEY=VALUE. Can be repeated.")
+    parser.add_argument(
+        "--stdin", action="store_true", help="Read raw text from stdin."
+    )
+    parser.add_argument(
+        "--tag", action="append", default=[], help="Tag. Can be repeated."
+    )
+    parser.add_argument(
+        "--artifact",
+        action="append",
+        default=[],
+        help="Artifact path. Can be repeated.",
+    )
+    parser.add_argument(
+        "--field",
+        action="append",
+        default=[],
+        help="Payload field as KEY=VALUE. Can be repeated.",
+    )
     parser.add_argument("--privacy", default="local_only", help="Privacy scope label.")
     parser.add_argument(
         "--review-not-required",
@@ -287,7 +403,9 @@ def add_capture_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
 def add_ingest_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("ingest", help="Append one or more adapter JSON events.")
     add_common_store_args(parser)
-    parser.add_argument("--file", help="JSON file to ingest. Use stdin when omitted or with --stdin.")
+    parser.add_argument(
+        "--file", help="JSON file to ingest. Use stdin when omitted or with --stdin."
+    )
     parser.add_argument("--stdin", action="store_true", help="Read JSON from stdin.")
     parser.add_argument("--cwd", help="Working directory to store in the event.")
     parser.set_defaults(func=cmd_ingest)
@@ -297,14 +415,20 @@ def add_clip_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     parser = sub.add_parser("clip", help="Capture clipboard/stdin text as a raw event.")
     add_common_store_args(parser)
     parser.add_argument("--source", default="clipboard", help="Event source.")
-    parser.add_argument("--type", dest="event_type", default="clipboard_clip", help="Event type.")
+    parser.add_argument(
+        "--type", dest="event_type", default="clipboard_clip", help="Event type."
+    )
     parser.add_argument("--project", help="Project name.")
     parser.add_argument("--cwd", help="Working directory to store in the event.")
-    parser.add_argument("--text", help="Text to capture instead of reading stdin/clipboard.")
+    parser.add_argument(
+        "--text", help="Text to capture instead of reading stdin/clipboard."
+    )
     parser.add_argument("--stdin", action="store_true", help="Read text from stdin.")
     parser.add_argument("--url", help="Optional source URL.")
     parser.add_argument("--title", help="Optional source title.")
-    parser.add_argument("--tag", action="append", default=[], help="Tag. Can be repeated.")
+    parser.add_argument(
+        "--tag", action="append", default=[], help="Tag. Can be repeated."
+    )
     parser.set_defaults(func=cmd_clip)
 
 
@@ -314,33 +438,62 @@ def add_run_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> 
     parser.add_argument("--source", default="terminal", help="Event source.")
     parser.add_argument("--project", help="Project name.")
     parser.add_argument("--cwd", help="Command working directory.")
-    parser.add_argument("--tag", action="append", default=[], help="Tag. Can be repeated.")
-    parser.add_argument("--shell", action="store_true", help="Run through the platform shell.")
-    parser.add_argument("--no-save-output", action="store_true", help="Do not save full stdout/stderr artifacts.")
-    parser.add_argument("command_args", nargs=argparse.REMAINDER, help="Command after --.")
+    parser.add_argument(
+        "--tag", action="append", default=[], help="Tag. Can be repeated."
+    )
+    parser.add_argument(
+        "--shell", action="store_true", help="Run through the platform shell."
+    )
+    parser.add_argument(
+        "--no-save-output",
+        action="store_true",
+        help="Do not save full stdout/stderr artifacts.",
+    )
+    parser.add_argument(
+        "command_args", nargs=argparse.REMAINDER, help="Command after --."
+    )
     parser.set_defaults(func=cmd_run)
 
 
-def add_git_snapshot_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("git-snapshot", help="Append current git state as evidence.")
+def add_git_snapshot_parser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    parser = sub.add_parser(
+        "git-snapshot", help="Append current git state as evidence."
+    )
     add_common_store_args(parser)
     parser.add_argument("--source", default="git", help="Event source.")
     parser.add_argument("--project", help="Project name.")
     parser.add_argument("--cwd", help="Git working directory.")
-    parser.add_argument("--tag", action="append", default=[], help="Tag. Can be repeated.")
-    parser.add_argument("--save-diff", action="store_true", help="Save full unstaged diff as an artifact.")
+    parser.add_argument(
+        "--tag", action="append", default=[], help="Tag. Can be repeated."
+    )
+    parser.add_argument(
+        "--save-diff",
+        action="store_true",
+        help="Save full unstaged diff as an artifact.",
+    )
     parser.set_defaults(func=cmd_git_snapshot)
 
 
 def add_watch_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("watch", help="Poll a project tree and capture file-change batches.")
+    parser = sub.add_parser(
+        "watch", help="Poll a project tree and capture file-change batches."
+    )
     add_common_store_args(parser)
     parser.add_argument("--root", default=".", help="Root directory to watch.")
     parser.add_argument("--project", help="Project name.")
-    parser.add_argument("--interval", type=float, default=5.0, help="Polling interval in seconds.")
+    parser.add_argument(
+        "--interval", type=float, default=5.0, help="Polling interval in seconds."
+    )
     parser.add_argument("--once", action="store_true", help="Scan once and exit.")
     parser.add_argument("--state", help="Watch state JSON path.")
-    parser.add_argument("--ignore", action="append", default=[], help="Extra ignore glob. Can be repeated.")
+    parser.add_argument(
+        "--ignore",
+        action="append",
+        default=[],
+        help="Extra ignore glob. Can be repeated.",
+    )
     parser.set_defaults(func=cmd_watch)
 
 
@@ -349,9 +502,17 @@ def add_daemon_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
         "daemon",
         help="Run all background capture surfaces (tailers, clipboard, watch, serve) in one process.",
     )
-    parser.add_argument("--once", action="store_true", help="Run one capture pass and exit.")
-    parser.add_argument("--status", action="store_true", help="Show daemon status and exit.")
-    parser.add_argument("--no-serve", action="store_true", help="Disable the localhost capture endpoint.")
+    parser.add_argument(
+        "--once", action="store_true", help="Run one capture pass and exit."
+    )
+    parser.add_argument(
+        "--status", action="store_true", help="Show daemon status and exit."
+    )
+    parser.add_argument(
+        "--no-serve",
+        action="store_true",
+        help="Disable the localhost capture endpoint.",
+    )
     parser.add_argument(
         "--backfill",
         action="store_true",
@@ -362,7 +523,9 @@ def add_daemon_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) 
 
 
 def add_sync_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("sync", help="Run the passive tailers once (no server, no loop).")
+    parser = sub.add_parser(
+        "sync", help="Run the passive tailers once (no server, no loop)."
+    )
     parser.add_argument(
         "--backfill",
         action="store_true",
@@ -372,13 +535,22 @@ def add_sync_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 
 def add_serve_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("serve", help="Run a localhost capture endpoint for browser/tool adapters.")
+    parser = sub.add_parser(
+        "serve", help="Run a localhost capture endpoint for browser/tool adapters."
+    )
     add_common_store_args(parser)
     parser.add_argument("--host", default="127.0.0.1", help="Listen host.")
     parser.add_argument("--port", type=int, default=8765, help="Listen port.")
     parser.add_argument("--cwd", help="Working directory to store in events.")
-    parser.add_argument("--token", help="Browser capture token. Defaults to daemon.serve.token in global config.")
-    parser.add_argument("--no-token", action="store_true", help="Disable token checks for this foreground server.")
+    parser.add_argument(
+        "--token",
+        help="Browser capture token. Defaults to daemon.serve.token in global config.",
+    )
+    parser.add_argument(
+        "--no-token",
+        action="store_true",
+        help="Disable token checks for this foreground server.",
+    )
     parser.add_argument(
         "--allow-origin",
         action="append",
@@ -388,53 +560,143 @@ def add_serve_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     parser.set_defaults(func=cmd_serve)
 
 
-def add_bookmarklet_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("bookmarklet", help="Print a browser bookmarklet for selected-text capture.")
-    parser.add_argument("--endpoint", default="http://127.0.0.1:8765/capture", help="Capture endpoint.")
-    parser.add_argument("--token", help="Browser capture token. Defaults to daemon.serve.token in global config.")
-    parser.add_argument("--no-token", action="store_true", help="Generate a bookmarklet without an auth header.")
+def add_bookmarklet_parser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    parser = sub.add_parser(
+        "bookmarklet", help="Print a browser bookmarklet for selected-text capture."
+    )
+    parser.add_argument(
+        "--endpoint", default="http://127.0.0.1:8765/capture", help="Capture endpoint."
+    )
+    parser.add_argument(
+        "--token",
+        help="Browser capture token. Defaults to daemon.serve.token in global config.",
+    )
+    parser.add_argument(
+        "--no-token",
+        action="store_true",
+        help="Generate a bookmarklet without an auth header.",
+    )
     parser.set_defaults(func=cmd_bookmarklet)
 
 
 def add_verify_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("verify", help="Verify JSON events and the complete ledger hash chain.")
-    add_common_store_args(parser)
-    parser.add_argument("--json", action="store_true", help="Print the versioned verification payload.")
+    parser = sub.add_parser(
+        "verify", help="Verify JSON events and the complete ledger hash chain."
+    )
+    add_query_store_args(parser)
+    parser.add_argument(
+        "--json", action="store_true", help="Print the versioned verification payload."
+    )
     parser.set_defaults(func=cmd_verify)
 
 
 def add_export_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("export", help="Incrementally export events using rawmem.cursor.v1.")
-    add_common_store_args(parser)
+    parser = sub.add_parser(
+        "export", help="Incrementally export events using rawmem.cursor.v1."
+    )
+    add_query_store_args(parser)
     cursor = parser.add_mutually_exclusive_group()
-    cursor.add_argument("--cursor-file", help="Read and atomically update a cursor JSON file.")
+    cursor.add_argument(
+        "--cursor-file", help="Read and atomically update a cursor JSON file."
+    )
     cursor.add_argument("--after-cursor", help="Inline rawmem.cursor.v1 JSON object.")
-    parser.add_argument("--limit", type=int, help="Maximum matching events in this batch.")
-    parser.add_argument("--max-bytes", type=int, default=8 * 1024 * 1024, help="Maximum bytes scanned per batch.")
-    parser.add_argument("--source", action="append", default=[], help="Allowed source. Can be repeated.")
-    parser.add_argument("--type", dest="event_types", action="append", default=[], help="Allowed event type. Can be repeated.")
-    parser.add_argument("--project", action="append", default=[], help="Allowed project. Can be repeated.")
+    parser.add_argument(
+        "--limit", type=int, help="Maximum matching events in this batch."
+    )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=8 * 1024 * 1024,
+        help="Maximum bytes scanned per batch.",
+    )
+    parser.add_argument(
+        "--source", action="append", default=[], help="Allowed source. Can be repeated."
+    )
+    parser.add_argument(
+        "--type",
+        dest="event_types",
+        action="append",
+        default=[],
+        help="Allowed event type. Can be repeated.",
+    )
+    parser.add_argument(
+        "--project",
+        action="append",
+        default=[],
+        help="Allowed project. Can be repeated.",
+    )
     parser.add_argument("--output", help="Optional JSONL file for exported events.")
-    parser.add_argument("--events-only", action="store_true", help="Print event JSONL instead of the batch envelope.")
+    parser.add_argument(
+        "--events-only",
+        action="store_true",
+        help="Print event JSONL instead of the batch envelope.",
+    )
+    parser.add_argument(
+        "--projection",
+        choices=EVENT_PROJECTIONS,
+        help="Event fields to return. Explicit archive queries default to metadata.",
+    )
     parser.set_defaults(func=cmd_export)
 
 
+def add_seal_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = sub.add_parser(
+        "seal",
+        help="Atomically seal the active ledger as a read-only archive and start a linked ledger.",
+    )
+    add_common_store_args(parser)
+    parser.add_argument(
+        "--destination", help="Explicit archive JSONL path (same filesystem required)."
+    )
+    parser.add_argument(
+        "--yes", action="store_true", help="Confirm the sealed-archive transition."
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Print the versioned seal result."
+    )
+    parser.set_defaults(func=cmd_seal)
+
+
 def add_rotate_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = sub.add_parser("rotate", help="Archive the current ledger and start a new ledger identity.")
+    parser = sub.add_parser("rotate", help="Compatibility alias for `seal`.")
     add_common_store_args(parser)
     parser.add_argument("--destination", help="Explicit archive JSONL path.")
     parser.add_argument("--yes", action="store_true", help="Confirm the rotation.")
     parser.set_defaults(func=cmd_rotate)
 
 
+def add_archives_parser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    parser = sub.add_parser(
+        "archives", help="List the derived, metadata-only archive registry."
+    )
+    add_common_store_args(parser)
+    parser.add_argument(
+        "--json", action="store_true", help="Print the versioned archive registry."
+    )
+    parser.set_defaults(func=cmd_archives)
+
+
 def add_tail_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser("tail", help="Show recent events.")
-    add_common_store_args(parser)
-    parser.add_argument("--limit", type=int, default=10, help="Number of events to show.")
+    add_query_store_args(parser)
+    parser.add_argument(
+        "--limit", type=int, default=10, help="Number of events to show."
+    )
     parser.add_argument("--json", action="store_true", help="Print full JSON events.")
     parser.add_argument("--source", help="Only show events from this source.")
-    parser.add_argument("--type", dest="event_type", help="Only show events of this type.")
+    parser.add_argument(
+        "--type", dest="event_type", help="Only show events of this type."
+    )
     parser.add_argument("--project", help="Only show events for this project.")
+    parser.add_argument(
+        "--projection",
+        choices=EVENT_PROJECTIONS,
+        help="Event fields to return. Explicit archive queries default to metadata.",
+    )
     parser.set_defaults(func=cmd_tail)
 
 
@@ -452,7 +714,9 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_setup(args: argparse.Namespace) -> int:
     if args.include_clipboard and args.disable_clipboard:
-        raise ValueError("--include-clipboard and --disable-clipboard cannot be used together")
+        raise ValueError(
+            "--include-clipboard and --disable-clipboard cannot be used together"
+        )
     if args.dry_run:
         for action in plan_setup_actions(args):
             print(f"dry_run: {action}")
@@ -479,7 +743,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
             return 0
     if args.global_setup:
         if not args.yes:
-            raise ValueError("--global writes machine-wide rawmem config and Git hooks; pass --yes to confirm")
+            raise ValueError(
+                "--global writes machine-wide rawmem config and Git hooks; pass --yes to confirm"
+            )
         actions.append(
             "global_config="
             f"{write_global_config(force=args.force, include_clipboard=args.include_clipboard, disable_clipboard=args.disable_clipboard)}"
@@ -494,13 +760,17 @@ def cmd_setup(args: argparse.Namespace) -> int:
         actions.extend(uninstall_global_git_hooks())
     if args.install_startup:
         if not args.yes:
-            raise ValueError("--install-startup registers a logon task; pass --yes to confirm")
+            raise ValueError(
+                "--install-startup registers a logon task; pass --yes to confirm"
+            )
         actions.append(install_startup_task())
     if args.uninstall_startup:
         actions.append(uninstall_startup_task())
     if args.start_daemon:
         actions.append(start_startup_task())
-    if global_requested and not (args.all or args.install_git_hooks or args.install_powershell_profile):
+    if global_requested and not (
+        args.all or args.install_git_hooks or args.install_powershell_profile
+    ):
         for action in actions:
             print(action)
         return 0
@@ -515,8 +785,14 @@ def cmd_setup(args: argparse.Namespace) -> int:
     )
     if args.install_powershell_profile:
         if not args.yes:
-            raise ValueError("--install-powershell-profile modifies a user profile; pass --yes to confirm")
-        profile = Path(args.profile_path).expanduser() if args.profile_path else default_powershell_profile()
+            raise ValueError(
+                "--install-powershell-profile modifies a user profile; pass --yes to confirm"
+            )
+        profile = (
+            Path(args.profile_path).expanduser()
+            if args.profile_path
+            else default_powershell_profile()
+        )
         installed = install_powershell_profile(profile, force=args.force)
         actions.append(f"powershell_profile={installed}")
     for action in actions:
@@ -552,8 +828,12 @@ def plan_setup_actions(args: argparse.Namespace) -> list[str]:
             raise ValueError(
                 f"core.hooksPath is already set to '{current}'; rerun with --force to replace it"
             )
-        actions.append(f"write global hook runner {hooks_dir / 'rawmem_git_hook_runner.py'}")
-        actions.extend(f"write global git hook {hooks_dir / hook}" for hook in DEFAULT_GIT_HOOKS)
+        actions.append(
+            f"write global hook runner {hooks_dir / 'rawmem_git_hook_runner.py'}"
+        )
+        actions.extend(
+            f"write global git hook {hooks_dir / hook}" for hook in DEFAULT_GIT_HOOKS
+        )
         actions.append(f"set git core.hooksPath={desired}")
     if args.uninstall_global_git_hooks:
         expected = global_git_hooks_dir().resolve().as_posix()
@@ -561,7 +841,9 @@ def plan_setup_actions(args: argparse.Namespace) -> list[str]:
         if current == expected:
             actions.append("unset git core.hooksPath")
         else:
-            actions.append(f"skip git core.hooksPath: current value is '{current or ''}'")
+            actions.append(
+                f"skip git core.hooksPath: current value is '{current or ''}'"
+            )
     if args.install_startup:
         actions.append(f"register Windows startup task {task_name}")
     if args.uninstall_startup:
@@ -569,7 +851,9 @@ def plan_setup_actions(args: argparse.Namespace) -> list[str]:
         actions.append(f"{state} Windows startup task {task_name}")
     if args.start_daemon:
         actions.append(f"start Windows startup task {task_name}")
-    if global_requested and not (args.all or args.install_git_hooks or args.install_powershell_profile):
+    if global_requested and not (
+        args.all or args.install_git_hooks or args.install_powershell_profile
+    ):
         return actions
 
     root = Path(args.project_root).resolve()
@@ -590,10 +874,19 @@ def plan_setup_actions(args: argparse.Namespace) -> list[str]:
         git_dir = root / ".git"
         if not git_dir.exists():
             raise ValueError(f"Not a git repository: {root}")
-        actions.append(f"write repo hook runner {git_dir / 'hooks' / 'rawmem_git_hook_runner.py'}")
-        actions.extend(f"write repo git hook {git_dir / 'hooks' / hook}" for hook in DEFAULT_GIT_HOOKS)
+        actions.append(
+            f"write repo hook runner {git_dir / 'hooks' / 'rawmem_git_hook_runner.py'}"
+        )
+        actions.extend(
+            f"write repo git hook {git_dir / 'hooks' / hook}"
+            for hook in DEFAULT_GIT_HOOKS
+        )
     if args.install_powershell_profile:
-        profile = Path(args.profile_path).expanduser() if args.profile_path else default_powershell_profile()
+        profile = (
+            Path(args.profile_path).expanduser()
+            if args.profile_path
+            else default_powershell_profile()
+        )
         actions.append(f"update PowerShell profile {profile}")
     return actions
 
@@ -601,7 +894,11 @@ def plan_setup_actions(args: argparse.Namespace) -> list[str]:
 def cmd_uninstall(args: argparse.Namespace) -> int:
     if args.remove_home and not (args.yes or args.dry_run):
         raise ValueError("--remove-home deletes the ledger and requires --yes")
-    profile = Path(args.profile_path).expanduser() if args.profile_path else default_powershell_profile()
+    profile = (
+        Path(args.profile_path).expanduser()
+        if args.profile_path
+        else default_powershell_profile()
+    )
     home = global_config_path().parent
     if args.dry_run:
         task_name = startup_task_name()
@@ -635,7 +932,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         raise ValueError("--status-max-age must be greater than zero")
     checks = run_diagnostics(timeout=args.timeout, status_max_age=args.status_max_age)
     if args.json:
-        print(json.dumps([check.as_dict() for check in checks], ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                [check.as_dict() for check in checks], ensure_ascii=False, indent=2
+            )
+        )
     else:
         print(render_diagnostics(checks))
     return diagnostics_exit_code(checks, strict=args.strict)
@@ -643,7 +944,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def cmd_config(args: argparse.Namespace) -> int:
     if args.include_clipboard and args.disable_clipboard:
-        raise ValueError("--include-clipboard and --disable-clipboard cannot be used together")
+        raise ValueError(
+            "--include-clipboard and --disable-clipboard cannot be used together"
+        )
     needs_write = (
         args.init
         or args.include_clipboard
@@ -665,7 +968,9 @@ def cmd_config(args: argparse.Namespace) -> int:
         print(ensure_capture_token(config))
     if args.json:
         print(json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True))
-    if not (args.path or args.show_browser_token or args.rotate_browser_token or args.json):
+    if not (
+        args.path or args.show_browser_token or args.rotate_browser_token or args.json
+    ):
         print(f"global_config={path}")
     return 0
 
@@ -803,7 +1108,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             event["artifacts"].append(file_artifact(stderr_path, kind="stderr"))
     saved = append_cli_event(ledger_path, event)
 
-    print_result(saved, ledger_path, stream=sys.stderr if result.returncode else sys.stdout)
+    print_result(
+        saved, ledger_path, stream=sys.stderr if result.returncode else sys.stdout
+    )
     return result.returncode
 
 
@@ -872,7 +1179,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
             event_policy=lambda event: policy.apply(event).event,
         )
         if saved:
-            print_result(saved, resolve_ledger_path(args.ledger, local=args.local, cwd=root))
+            print_result(
+                saved, resolve_ledger_path(args.ledger, local=args.local, cwd=root)
+            )
         else:
             print("no changes")
         return 0
@@ -916,7 +1225,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
     require_token = not args.no_token
     token = args.token or serve_cfg.get("token")
     if require_token and (not isinstance(token, str) or not token.strip()):
-        raise ValueError("capture token missing; run `rawmem config --init` or pass --token/--no-token")
+        raise ValueError(
+            "capture token missing; run `rawmem config --init` or pass --token/--no-token"
+        )
     serve_capture(
         host=args.host,
         port=args.port,
@@ -937,15 +1248,35 @@ def cmd_bookmarklet(args: argparse.Namespace) -> int:
         config = load_global_config()
         serve_cfg = (config.get("daemon") or {}).get("serve") or {}
         token = args.token or serve_cfg.get("token")
-    print(build_bookmarklet(args.endpoint, token=token if isinstance(token, str) else None))
+    print(
+        build_bookmarklet(
+            args.endpoint, token=token if isinstance(token, str) else None
+        )
+    )
     return 0
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    ledger_path = resolve_ledger_path(args.ledger, local=args.local)
+    ledger_path, archive_query = resolve_query_target(args)
+    if archive_query:
+        status = verify_sealed_archive(ledger_path)
+        if args.json:
+            print(json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True))
+        elif status["valid"]:
+            print(
+                f"verified sealed archive: {status['accepted_breakpoint_count']} recorded breakpoint(s), "
+                f"ledger_id={status['ledger_id']}"
+            )
+        else:
+            print(f"FAILED sealed archive verification: {ledger_path}")
+        return 0 if status["valid"] else 1
+
+    assert_active_ledger(ledger_path)
     result = verify_ledger(ledger_path)
     if args.json:
-        print(json.dumps(result.as_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+        print(
+            json.dumps(result.as_dict(), ensure_ascii=False, indent=2, sort_keys=True)
+        )
     elif result.valid:
         print(
             f"verified {result.event_count} event(s), {result.byte_size} bytes, "
@@ -954,12 +1285,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
     else:
         print(f"FAILED: {len(result.errors)} error(s) in {ledger_path}")
         for error in result.errors:
-            print(f"line {error.get('line', '?')}: {error.get('code')}: {error.get('message')}")
+            print(
+                f"line {error.get('line', '?')}: {error.get('code')}: {error.get('message')}"
+            )
     return 0 if result.valid else 1
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    ledger_path = resolve_ledger_path(args.ledger, local=args.local)
+    ledger_path, archive_query = resolve_query_target(args)
     cursor: LedgerCursor | dict[str, Any] | None = None
     if args.cursor_file:
         cursor = load_cursor(args.cursor_file)
@@ -968,7 +1301,9 @@ def cmd_export(args: argparse.Namespace) -> int:
         if not isinstance(value, dict):
             raise ValueError("--after-cursor must be a JSON object")
         cursor = value
-    batch = iter_events(
+    projection = args.projection or ("metadata" if archive_query else "full")
+    reader = iter_archive_events if archive_query else iter_events
+    batch = reader(
         ledger_path,
         after_cursor=cursor,
         sources=args.source or None,
@@ -976,16 +1311,28 @@ def cmd_export(args: argparse.Namespace) -> int:
         projects=args.project or None,
         limit=args.limit,
         max_bytes=args.max_bytes,
+        projection=projection,
     )
-    if args.cursor_file and batch.cursor_status == "ok" and batch.chain_status != "failed":
+    if (
+        args.cursor_file
+        and batch.cursor_status == "ok"
+        and batch.chain_status != "failed"
+    ):
         save_cursor(args.cursor_file, batch.next_cursor)
     if args.output:
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", encoding="utf-8", newline="\n") as handle:
             for event in batch.events:
-                handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+                handle.write(
+                    json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
+                )
     if args.events_only:
+        for warning in batch.integrity_warnings:
+            report_error(
+                "rawmem: archive integrity warning: "
+                f"{warning.get('code')} at byte {warning.get('byte_offset')} (recorded)"
+            )
         for event in batch.events:
             print(json.dumps(event, ensure_ascii=False, sort_keys=True))
     else:
@@ -993,26 +1340,76 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0 if batch.cursor_status == "ok" and batch.chain_status != "failed" else 1
 
 
+def cmd_seal(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise ValueError("ledger sealing requires --yes")
+    ledger_path = resolve_ledger_path(args.ledger, local=args.local)
+    result = seal_ledger(ledger_path, destination=args.destination)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(
+            f"sealed {result['archived_bytes']} bytes -> {result['archived_ledger']}; "
+            f"breakpoints={result['breakpoint_count']}; active={result['new_ledger']}"
+        )
+    return 0
+
+
 def cmd_rotate(args: argparse.Namespace) -> int:
     if not args.yes:
         raise ValueError("ledger rotation requires --yes")
     ledger_path = resolve_ledger_path(args.ledger, local=args.local)
-    result = rotate_ledger(ledger_path, destination=args.destination)
+    result = seal_ledger(ledger_path, destination=args.destination)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 
-def cmd_tail(args: argparse.Namespace) -> int:
+def cmd_archives(args: argparse.Namespace) -> int:
     ledger_path = resolve_ledger_path(args.ledger, local=args.local)
-    events = read_events(ledger_path)
-    if args.source:
-        events = [event for event in events if event.get("source") == args.source]
-    if args.event_type:
-        events = [event for event in events if event.get("event_type") == args.event_type]
-    if args.project:
-        events = [event for event in events if event.get("project") == args.project]
+    registry = list_archives(ledger_path)
+    if args.json:
+        print(json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        for item in registry["archives"]:
+            print(
+                f"{item.get('sealed_at')} {item.get('archive_id')} "
+                f"events={item.get('event_count')} breaks={item.get('breakpoint_count')} "
+                f"{item.get('archive_path')}"
+            )
+    return 0
+
+
+def cmd_tail(args: argparse.Namespace) -> int:
     if args.limit <= 0:
         return 0
+    ledger_path, archive_query = resolve_query_target(args)
+    projection = args.projection or ("metadata" if archive_query else "full")
+    integrity_warnings: list[dict[str, Any]] = []
+    if archive_query:
+        events, integrity_warnings = read_archive_tail(
+            ledger_path,
+            limit=args.limit,
+            source=args.source,
+            event_type=args.event_type,
+            project=args.project,
+            projection=projection,
+        )
+    else:
+        events = read_events(ledger_path)
+        if args.source:
+            events = [event for event in events if event.get("source") == args.source]
+        if args.event_type:
+            events = [
+                event for event in events if event.get("event_type") == args.event_type
+            ]
+        if args.project:
+            events = [event for event in events if event.get("project") == args.project]
+        events = [project_event(event, projection) for event in events[-args.limit :]]
+    for warning in integrity_warnings:
+        report_error(
+            "rawmem: archive integrity warning: "
+            f"{warning.get('code')} at byte {warning.get('byte_offset')} (recorded)"
+        )
     for event in events[-args.limit :]:
         if args.json:
             print(json.dumps(event, ensure_ascii=False, sort_keys=True))
@@ -1029,6 +1426,51 @@ def cmd_tail(args: argparse.Namespace) -> int:
 def cmd_path(args: argparse.Namespace) -> int:
     print(resolve_ledger_path(args.ledger, local=args.local))
     return 0
+
+
+def resolve_query_target(args: argparse.Namespace) -> tuple[Path, bool]:
+    archive = getattr(args, "archive", None)
+    if archive:
+        return Path(archive).expanduser(), True
+    return resolve_ledger_path(args.ledger, local=args.local), False
+
+
+def read_archive_tail(
+    path: Path,
+    *,
+    limit: int,
+    source: str | None,
+    event_type: str | None,
+    project: str | None,
+    projection: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    cursor: LedgerCursor | None = None
+    selected: list[dict[str, Any]] = []
+    integrity_warnings: list[dict[str, Any]] = []
+    while True:
+        batch = iter_archive_events(
+            path,
+            after_cursor=cursor,
+            sources=[source] if source else None,
+            event_types=[event_type] if event_type else None,
+            projects=[project] if project else None,
+            max_bytes=8 * 1024 * 1024,
+            projection=projection,
+        )
+        if batch.cursor_status != "ok" or batch.chain_status == "failed":
+            raise ValueError(
+                "sealed archive query failed: " + "; ".join(batch.warnings)
+            )
+        selected.extend(batch.events)
+        if len(selected) > limit:
+            selected = selected[-limit:]
+        integrity_warnings.extend(batch.integrity_warnings)
+        if batch.next_cursor.byte_offset >= batch.ledger_size:
+            break
+        if cursor is not None and batch.next_cursor.byte_offset <= cursor.byte_offset:
+            raise ValueError("sealed archive query made no progress")
+        cursor = batch.next_cursor
+    return selected, integrity_warnings
 
 
 def normalize_remainder(items: list[str]) -> list[str]:
@@ -1070,7 +1512,9 @@ def read_clipboard() -> str:
         )
         if result.returncode == 0:
             return result.stdout
-    raise ValueError("No text provided and clipboard capture is not available on this platform")
+    raise ValueError(
+        "No text provided and clipboard capture is not available on this platform"
+    )
 
 
 def git_optional(args: list[str], cwd: Path, *, default: str = "") -> str:
@@ -1088,5 +1532,7 @@ def git_optional(args: list[str], cwd: Path, *, default: str = "") -> str:
     return result.stdout
 
 
-def print_result(event: dict[str, Any], ledger_path: Path, *, stream: Any = sys.stdout) -> None:
+def print_result(
+    event: dict[str, Any], ledger_path: Path, *, stream: Any = sys.stdout
+) -> None:
     print(f"{event['event_id']} -> {ledger_path}", file=stream)

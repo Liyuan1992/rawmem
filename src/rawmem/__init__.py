@@ -1,5 +1,12 @@
 """Local-first raw evidence ledger."""
 
+from .archive import (
+    iter_archive_events,
+    list_archives,
+    seal_ledger,
+    verify_sealed_archive,
+)
+from .archive_format import SealedArchiveError
 from .ledger import (
     CURSOR_SCHEMA,
     EVENT_BATCH_SCHEMA,
@@ -15,7 +22,7 @@ from .ledger import (
 )
 from .privacy import CaptureDecision, CapturePolicy
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 
 __all__ = [
     "SCHEMA",
@@ -24,11 +31,16 @@ __all__ = [
     "LedgerCursor",
     "EventBatch",
     "VerificationResult",
+    "SealedArchiveError",
     "append_event",
+    "iter_archive_events",
     "iter_events",
     "ledger_identity",
+    "list_archives",
     "rotate_ledger",
+    "seal_ledger",
     "verify_ledger",
+    "verify_sealed_archive",
     "CaptureDecision",
     "CapturePolicy",
     "__version__",

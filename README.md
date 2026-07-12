@@ -94,7 +94,9 @@ rawmem tail --source claude-code --limit 5
 rawmem tail --project rawmem --type agent_user_turn --json
 rawmem verify --json
 rawmem export --cursor-file .rawmem\consumer-cursor.json --limit 100
-rawmem rotate --yes                 # explicit archive + new ledger identity
+rawmem seal --yes --json            # unchanged read-only archive + linked active ledger
+rawmem archives --json              # metadata-only derived archive registry
+rawmem export --archive .rawmem\archives\old.jsonl  # explicit; metadata-only default
 ```
 
 `rawmem export` uses the stable `rawmem.cursor.v1` contract and never needs to
@@ -102,6 +104,14 @@ load the whole ledger. Cursors bind to a ledger identity plus a byte offset and
 boundary hash, so truncation, replacement, or rotation is reported explicitly
 instead of silently skipping or duplicating evidence. See
 [docs/LEDGER_PROTOCOL.md](docs/LEDGER_PROTOCOL.md).
+
+`rawmem verify` is strictly read-only: it never creates or refreshes lock/state
+sidecars. `rawmem seal` keeps historical bytes unchanged, records the full
+verification report and every accepted `previous_hash_mismatch`, marks the old
+ledger ReadOnly on Windows, and creates a chain-complete active ledger at the
+same configured path. Archive reads require `--archive`; they hash the complete
+archive before returning results, default to a body-free metadata projection,
+and surface recorded integrity warnings.
 
 Manual and scripted capture:
 

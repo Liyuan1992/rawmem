@@ -1,0 +1,73 @@
+{
+  "schema_version": "rawmem.archive_contract_fixture.v1",
+  "manifest": {
+    "schema_version": "rawmem.archive_manifest.v1",
+    "required_top_level_fields": [
+      "schema_version",
+      "archive_id",
+      "sealed_at",
+      "source_active_ledger",
+      "archive",
+      "verification",
+      "breakpoints",
+      "state_sidecar",
+      "append_policy",
+      "query_policy"
+    ],
+    "required_archive_fields": [
+      "path",
+      "ledger_id",
+      "byte_size",
+      "sha256",
+      "event_count",
+      "first_content_hash",
+      "last_event_id",
+      "last_content_hash"
+    ]
+  },
+  "registry": {
+    "schema_version": "rawmem.archive_registry.v1",
+    "required_top_level_fields": [
+      "schema_version",
+      "active_ledger",
+      "updated_at",
+      "derived",
+      "rebuildable_from",
+      "authority",
+      "archives"
+    ],
+    "required_entry_fields": [
+      "archive_id",
+      "archive_path",
+      "manifest_path",
+      "manifest_sha256",
+      "sealed_at",
+      "ledger_id",
+      "byte_size",
+      "ledger_sha256",
+      "event_count",
+      "breakpoint_count",
+      "status"
+    ]
+  },
+  "iter_archive_events": {
+    "parameters": [
+      "archive_path",
+      "after_cursor",
+      "sources",
+      "event_types",
+      "projects",
+      "limit",
+      "max_bytes",
+      "projection"
+    ],
+    "default_max_bytes": 8388608,
+    "default_projection": "metadata",
+    "projection_choices": [
+      "full",
+      "summary",
+      "metadata"
+    ],
+    "return_type": "rawmem.ledger.EventBatch"
+  }
+}

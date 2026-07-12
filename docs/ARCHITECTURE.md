@@ -37,6 +37,8 @@ tailing its transcript is neither. So the priority order is:
    - Cross-process locked appends and lightweight hash chain
    - O(1)-steady-state last-hash sidecar
    - Incremental `rawmem.cursor.v1` readers and full-chain verification
+   - Pure read-only verification with no lock/state side effects
+   - Immutable sealed archives, pinned breakpoints, and linked active transitions
    - Local/private by default
 
 3. Derived layers
@@ -88,6 +90,15 @@ passively.
 
 `rawmem uninstall` reverses the machine integrations while preserving the
 append-only ledger. Deleting `~/.rawmem` is a separate, confirmed action.
+
+## Active and sealed storage
+
+Capture has exactly one writable authority: the configured active ledger path.
+Sealing moves its bytes unchanged into the sibling `archives/` area while the
+same path is restarted with a `ledger_transition` event. Sealed manifests are
+authoritative; the adjacent archive registry is metadata-only, derived, and
+rebuildable. Ordinary readers stay on active. Archive readers must opt in and
+default to a body-free metadata projection.
 
 ## Operability Layer
 
