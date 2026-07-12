@@ -11,13 +11,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from .archive_format import assert_active_ledger
 from .locking import exclusive_file_lock
+from .projection import EVENT_PROJECTIONS, project_event
+from .verification import (
+    VERIFY_SCHEMA as VERIFY_SCHEMA,
+    VerificationResult as VerificationResult,
+    verify_ledger as verify_ledger,
+)
 
 
 SCHEMA = "rawmem.event.v1"
 CURSOR_SCHEMA = "rawmem.cursor.v1"
 EVENT_BATCH_SCHEMA = "rawmem.event_batch.v1"
-VERIFY_SCHEMA = "rawmem.verify.v1"
 LEDGER_STATE_SCHEMA = "rawmem.ledger_state.v1"
 DEFAULT_BATCH_BYTES = 8 * 1024 * 1024
 
@@ -67,6 +73,7 @@ class EventBatch:
     bytes_read: int = 0
     ledger_size: int = 0
     warnings: list[str] = field(default_factory=list)
+    integrity_warnings: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -79,29 +86,7 @@ class EventBatch:
             "bytes_read": self.bytes_read,
             "ledger_size": self.ledger_size,
             "warnings": self.warnings,
-        }
-
-
-@dataclass
-class VerificationResult:
-    valid: bool
-    ledger_id: str
-    event_count: int
-    byte_size: int
-    last_event_id: str | None = None
-    last_content_hash: str | None = None
-    errors: list[dict[str, Any]] = field(default_factory=list)
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": VERIFY_SCHEMA,
-            "valid": self.valid,
-            "ledger_id": self.ledger_id,
-            "event_count": self.event_count,
-            "byte_size": self.byte_size,
-            "last_event_id": self.last_event_id,
-            "last_content_hash": self.last_content_hash,
-            "errors": self.errors,
+            "integrity_warnings": self.integrity_warnings,
         }
 
 
@@ -128,7 +113,12 @@ def save_cursor(path: str | Path, cursor: LedgerCursor) -> None:
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def new_event_id() -> str:
@@ -239,14 +229,19 @@ def _load_ledger_state(path: Path) -> dict[str, Any] | None:
         value = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(value, dict) or value.get("schema_version") != LEDGER_STATE_SCHEMA:
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != LEDGER_STATE_SCHEMA
+    ):
         return None
     return value
 
 
 def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_path = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
@@ -279,7 +274,9 @@ def _read_first_event_unlocked(path: Path) -> dict[str, Any] | None:
     return None
 
 
-def _read_last_event_unlocked(path: Path, *, before_offset: int | None = None) -> dict[str, Any] | None:
+def _read_last_event_unlocked(
+    path: Path, *, before_offset: int | None = None
+) -> dict[str, Any] | None:
     if not path.exists():
         return None
     size = path.stat().st_size
@@ -357,12 +354,14 @@ def _ensure_state_unlocked(path: Path) -> dict[str, Any]:
 
 def ledger_identity(ledger_path: str | Path) -> str:
     path = Path(ledger_path)
+    assert_active_ledger(path)
     with exclusive_file_lock(ledger_lock_path(path)):
         return str(_ensure_state_unlocked(path)["ledger_id"])
 
 
 def read_events(ledger_path: str | Path) -> list[dict[str, Any]]:
     path = Path(ledger_path)
+    assert_active_ledger(path)
     if not path.exists():
         return []
     events: list[dict[str, Any]] = []
@@ -375,15 +374,20 @@ def read_events(ledger_path: str | Path) -> list[dict[str, Any]]:
                 try:
                     value = json.loads(line)
                 except json.JSONDecodeError as exc:
-                    raise ValueError(f"Invalid JSON in {path} line {line_number}: {exc}") from exc
+                    raise ValueError(
+                        f"Invalid JSON in {path} line {line_number}: {exc}"
+                    ) from exc
                 if not isinstance(value, dict):
-                    raise ValueError(f"Invalid event object in {path} line {line_number}")
+                    raise ValueError(
+                        f"Invalid event object in {path} line {line_number}"
+                    )
                 events.append(value)
     return events
 
 
 def last_event(ledger_path: str | Path) -> dict[str, Any] | None:
     path = Path(ledger_path)
+    assert_active_ledger(path)
     with exclusive_file_lock(ledger_lock_path(path)):
         return _read_last_event_unlocked(path)
 
@@ -435,13 +439,16 @@ def summarize(text: str | None, *, limit: int = 120) -> str:
 
 def append_event(ledger_path: str | Path, event: dict[str, Any]) -> dict[str, Any]:
     path = Path(ledger_path)
+    assert_active_ledger(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with exclusive_file_lock(ledger_lock_path(path)):
         state = _ensure_state_unlocked(path)
         event = dict(event)
         event["previous_hash"] = state.get("last_content_hash")
         event["content_hash"] = content_hash(event)
-        raw = (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+        raw = (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode(
+            "utf-8"
+        )
         with path.open("ab") as handle:
             handle.write(raw)
             handle.flush()
@@ -452,7 +459,8 @@ def append_event(ledger_path: str | Path, event: dict[str, Any]) -> dict[str, An
             {
                 "file_size": stat.st_size,
                 "file_mtime_ns": stat.st_mtime_ns,
-                "first_content_hash": state.get("first_content_hash") or event["content_hash"],
+                "first_content_hash": state.get("first_content_hash")
+                or event["content_hash"],
                 "last_event_id": event.get("event_id"),
                 "last_content_hash": event["content_hash"],
                 "event_count": count + 1 if isinstance(count, int) else None,
@@ -463,103 +471,9 @@ def append_event(ledger_path: str | Path, event: dict[str, Any]) -> dict[str, An
         return event
 
 
-def verify_ledger(ledger_path: str | Path) -> VerificationResult:
-    """Verify every JSON event, content hash, link, and event id in a ledger."""
-
-    path = Path(ledger_path)
-    with exclusive_file_lock(ledger_lock_path(path)):
-        state = _ensure_state_unlocked(path)
-        errors: list[dict[str, Any]] = []
-        previous_hash: str | None = None
-        first_hash: str | None = None
-        last_id: str | None = None
-        seen_ids: set[str] = set()
-        count = 0
-        if path.exists():
-            with path.open("rb") as handle:
-                for line_number, raw in enumerate(handle, start=1):
-                    if not raw.strip():
-                        continue
-                    try:
-                        event = _decode_event_line(path, raw, location=f"line {line_number}")
-                    except ValueError as exc:
-                        errors.append(
-                            {"line": line_number, "code": "invalid_json", "message": str(exc)}
-                        )
-                        break
-                    count += 1
-                    event_id = _optional_text(event.get("event_id"))
-                    stored_hash = _optional_text(event.get("content_hash"))
-                    if event.get("schema") != SCHEMA:
-                        errors.append(
-                            {
-                                "line": line_number,
-                                "code": "schema_mismatch",
-                                "message": f"Expected {SCHEMA}, got {event.get('schema')}",
-                            }
-                        )
-                    if event_id is None:
-                        errors.append(
-                            {"line": line_number, "code": "missing_event_id", "message": "event_id missing"}
-                        )
-                    elif event_id in seen_ids:
-                        errors.append(
-                            {
-                                "line": line_number,
-                                "code": "duplicate_event_id",
-                                "message": f"Duplicate event_id: {event_id}",
-                            }
-                        )
-                    else:
-                        seen_ids.add(event_id)
-                    if event.get("previous_hash") != previous_hash:
-                        errors.append(
-                            {
-                                "line": line_number,
-                                "code": "previous_hash_mismatch",
-                                "message": "previous_hash does not match the preceding content_hash",
-                            }
-                        )
-                    calculated = content_hash(event)
-                    if stored_hash != calculated:
-                        errors.append(
-                            {
-                                "line": line_number,
-                                "code": "content_hash_mismatch",
-                                "message": f"Stored {stored_hash}, calculated {calculated}",
-                            }
-                        )
-                    previous_hash = stored_hash
-                    first_hash = first_hash or stored_hash
-                    last_id = event_id
-        size = path.stat().st_size if path.exists() else 0
-        valid = not errors
-        if valid:
-            stat = path.stat() if path.exists() else None
-            state.update(
-                {
-                    "file_size": size,
-                    "file_mtime_ns": stat.st_mtime_ns if stat else 0,
-                    "first_content_hash": first_hash,
-                    "last_event_id": last_id,
-                    "last_content_hash": previous_hash,
-                    "event_count": count,
-                    "updated_at": utc_now_iso(),
-                }
-            )
-            _atomic_write_json(ledger_state_path(path), state)
-        return VerificationResult(
-            valid=valid,
-            ledger_id=str(state["ledger_id"]),
-            event_count=count,
-            byte_size=size,
-            last_event_id=last_id,
-            last_content_hash=previous_hash,
-            errors=errors,
-        )
-
-
-def _coerce_cursor(value: LedgerCursor | dict[str, Any] | None, ledger_id: str) -> LedgerCursor:
+def _coerce_cursor(
+    value: LedgerCursor | dict[str, Any] | None, ledger_id: str
+) -> LedgerCursor:
     if value is None:
         return LedgerCursor(ledger_id=ledger_id)
     if isinstance(value, LedgerCursor):
@@ -582,6 +496,7 @@ def iter_events(
     projects: Iterable[str] | None = None,
     limit: int | None = None,
     max_bytes: int = DEFAULT_BATCH_BYTES,
+    projection: str = "full",
 ) -> EventBatch:
     """Read complete new events without loading the whole ledger into memory."""
 
@@ -589,138 +504,238 @@ def iter_events(
         raise ValueError("limit cannot be negative")
     if max_bytes <= 0:
         raise ValueError("max_bytes must be positive")
+    if projection not in EVENT_PROJECTIONS:
+        raise ValueError(f"unsupported event projection: {projection}")
     path = Path(ledger_path)
+    assert_active_ledger(path)
+    with exclusive_file_lock(ledger_lock_path(path)):
+        state = _ensure_state_unlocked(path)
+        return _iter_events_snapshot(
+            path,
+            ledger_id=str(state["ledger_id"]),
+            after_cursor=after_cursor,
+            sources=sources,
+            event_types=event_types,
+            projects=projects,
+            limit=limit,
+            max_bytes=max_bytes,
+            projection=projection,
+        )
+
+
+def _iter_events_snapshot(
+    path: Path,
+    *,
+    ledger_id: str,
+    after_cursor: LedgerCursor | dict[str, Any] | None = None,
+    sources: Iterable[str] | None = None,
+    event_types: Iterable[str] | None = None,
+    projects: Iterable[str] | None = None,
+    limit: int | None = None,
+    max_bytes: int = DEFAULT_BATCH_BYTES,
+    projection: str = "full",
+    recorded_breakpoints: dict[int, dict[str, Any]] | None = None,
+) -> EventBatch:
+    """Scan one stable ledger snapshot.
+
+    Active callers own the writer lock.  Sealed-archive callers validate the
+    manifest and read-only breakpoint list before entering this helper.
+    """
+
+    if limit is not None and limit < 0:
+        raise ValueError("limit cannot be negative")
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
+    if projection not in EVENT_PROJECTIONS:
+        raise ValueError(f"unsupported event projection: {projection}")
     source_filter = set(sources) if sources is not None else None
     type_filter = set(event_types) if event_types is not None else None
     project_filter = set(projects) if projects is not None else None
-    with exclusive_file_lock(ledger_lock_path(path)):
-        state = _ensure_state_unlocked(path)
-        ledger_id = str(state["ledger_id"])
-        cursor = _coerce_cursor(after_cursor, ledger_id)
-        size = path.stat().st_size if path.exists() else 0
-        reset_cursor = LedgerCursor(ledger_id=ledger_id)
-        if cursor.ledger_id != ledger_id:
-            return EventBatch(
-                events=[],
-                next_cursor=reset_cursor,
-                chain_status="not_checked",
-                cursor_status="ledger_changed",
-                ledger_size=size,
-                warnings=["Cursor belongs to a different ledger identity; reset is required."],
-            )
-        if cursor.byte_offset > size:
-            return EventBatch(
-                events=[],
-                next_cursor=reset_cursor,
-                chain_status="not_checked",
-                cursor_status="truncated",
-                ledger_size=size,
-                warnings=["Ledger is shorter than the cursor offset; reset or recovery is required."],
-            )
-        expected_previous = cursor.last_content_hash
-        if cursor.byte_offset > 0:
-            if not cursor.last_event_id or not cursor.last_content_hash:
-                return EventBatch(
-                    events=[],
-                    next_cursor=reset_cursor,
-                    chain_status="failed",
-                    cursor_status="invalid",
-                    ledger_size=size,
-                    warnings=["Non-zero cursor is missing the boundary event id or content hash."],
-                )
-            boundary = _read_last_event_unlocked(path, before_offset=cursor.byte_offset)
-            if (
-                boundary is None
-                or boundary.get("event_id") != cursor.last_event_id
-                or boundary.get("content_hash") != cursor.last_content_hash
-            ):
-                return EventBatch(
-                    events=[],
-                    next_cursor=reset_cursor,
-                    chain_status="failed",
-                    cursor_status="invalid",
-                    ledger_size=size,
-                    warnings=["Cursor boundary no longer matches the ledger; reset is required."],
-                )
-        if limit == 0 or not path.exists() or cursor.byte_offset == size:
-            return EventBatch(
-                events=[],
-                next_cursor=cursor,
-                chain_status="verified" if cursor.byte_offset == 0 else "partial",
-                ledger_size=size,
-            )
-
-        selected: list[dict[str, Any]] = []
-        warnings: list[str] = []
-        offset = cursor.byte_offset
-        last_id = cursor.last_event_id
-        last_hash = cursor.last_content_hash
-        failed = False
-        stopped_early = False
-        with path.open("rb") as handle:
-            handle.seek(offset)
-            while offset < size:
-                if offset - cursor.byte_offset >= max_bytes:
-                    stopped_early = True
-                    break
-                line_start = offset
-                raw = handle.readline(min(size - offset, max_bytes - (offset - cursor.byte_offset)))
-                if not raw:
-                    break
-                if not raw.endswith(b"\n"):
-                    warnings.append("Ignored an incomplete trailing event line.")
-                    stopped_early = True
-                    break
-                offset += len(raw)
-                if not raw.strip():
-                    continue
-                try:
-                    event = _decode_event_line(path, raw, location=f"byte {line_start}")
-                except ValueError as exc:
-                    warnings.append(str(exc))
-                    failed = True
-                    offset = line_start
-                    break
-                stored_hash = _optional_text(event.get("content_hash"))
-                if event.get("previous_hash") != expected_previous or stored_hash != content_hash(event):
-                    warnings.append(f"Hash chain verification failed at byte {line_start}.")
-                    failed = True
-                    offset = line_start
-                    break
-                expected_previous = stored_hash
-                last_hash = stored_hash
-                last_id = _optional_text(event.get("event_id"))
-                if (
-                    _matches_filter(event.get("source"), source_filter)
-                    and _matches_filter(event.get("event_type"), type_filter)
-                    and _matches_filter(event.get("project"), project_filter)
-                ):
-                    selected.append(event)
-                    if limit is not None and len(selected) >= limit:
-                        stopped_early = offset < size
-                        break
-        next_cursor = LedgerCursor(
-            ledger_id=ledger_id,
-            byte_offset=offset,
-            last_event_id=last_id,
-            last_content_hash=last_hash,
-        )
-        if failed:
-            chain_status = "failed"
-        elif cursor.byte_offset == 0 and offset == size:
-            chain_status = "verified"
-        else:
-            chain_status = "partial"
+    cursor = _coerce_cursor(after_cursor, ledger_id)
+    size = path.stat().st_size if path.exists() else 0
+    reset_cursor = LedgerCursor(ledger_id=ledger_id)
+    if cursor.ledger_id != ledger_id:
         return EventBatch(
-            events=selected,
-            next_cursor=next_cursor,
-            chain_status=chain_status,
-            cursor_status="invalid" if failed else "ok",
-            truncated=stopped_early,
-            bytes_read=offset - cursor.byte_offset,
+            events=[],
+            next_cursor=reset_cursor,
+            chain_status="not_checked",
+            cursor_status="ledger_changed",
             ledger_size=size,
-            warnings=warnings,
+            warnings=[
+                "Cursor belongs to a different ledger identity; reset is required."
+            ],
         )
+    if cursor.byte_offset > size:
+        return EventBatch(
+            events=[],
+            next_cursor=reset_cursor,
+            chain_status="not_checked",
+            cursor_status="truncated",
+            ledger_size=size,
+            warnings=[
+                "Ledger is shorter than the cursor offset; reset or recovery is required."
+            ],
+        )
+    expected_previous = cursor.last_content_hash
+    if cursor.byte_offset > 0:
+        if not cursor.last_event_id or not cursor.last_content_hash:
+            return EventBatch(
+                events=[],
+                next_cursor=reset_cursor,
+                chain_status="failed",
+                cursor_status="invalid",
+                ledger_size=size,
+                warnings=[
+                    "Non-zero cursor is missing the boundary event id or content hash."
+                ],
+            )
+        boundary = _read_last_event_unlocked(path, before_offset=cursor.byte_offset)
+        if (
+            boundary is None
+            or boundary.get("event_id") != cursor.last_event_id
+            or boundary.get("content_hash") != cursor.last_content_hash
+        ):
+            return EventBatch(
+                events=[],
+                next_cursor=reset_cursor,
+                chain_status="failed",
+                cursor_status="invalid",
+                ledger_size=size,
+                warnings=[
+                    "Cursor boundary no longer matches the ledger; reset is required."
+                ],
+            )
+    if limit == 0 or not path.exists() or cursor.byte_offset == size:
+        return EventBatch(
+            events=[],
+            next_cursor=cursor,
+            chain_status="verified" if cursor.byte_offset == 0 else "partial",
+            ledger_size=size,
+        )
+
+    selected: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    integrity_warnings: list[dict[str, Any]] = []
+    offset = cursor.byte_offset
+    last_id = cursor.last_event_id
+    last_hash = cursor.last_content_hash
+    failed = False
+    stopped_early = False
+    with path.open("rb") as handle:
+        handle.seek(offset)
+        while offset < size:
+            if offset - cursor.byte_offset >= max_bytes:
+                stopped_early = True
+                break
+            line_start = offset
+            raw = handle.readline(
+                min(size - offset, max_bytes - (offset - cursor.byte_offset))
+            )
+            if not raw:
+                break
+            if not raw.endswith(b"\n"):
+                warnings.append("Ignored an incomplete trailing event line.")
+                stopped_early = True
+                break
+            offset += len(raw)
+            if not raw.strip():
+                continue
+            try:
+                event = _decode_event_line(path, raw, location=f"byte {line_start}")
+            except ValueError as exc:
+                warnings.append(str(exc))
+                failed = True
+                offset = line_start
+                break
+            stored_hash = _optional_text(event.get("content_hash"))
+            if stored_hash != content_hash(event):
+                warnings.append(
+                    f"Content hash verification failed at byte {line_start}."
+                )
+                failed = True
+                offset = line_start
+                break
+            if event.get("previous_hash") != expected_previous:
+                recorded = (recorded_breakpoints or {}).get(line_start)
+                if not _recorded_breakpoint_matches(
+                    recorded,
+                    event=event,
+                    expected_previous=expected_previous,
+                    stored_hash=stored_hash,
+                ):
+                    warnings.append(
+                        f"Unrecorded hash-chain break at byte {line_start}."
+                    )
+                    failed = True
+                    offset = line_start
+                    break
+                assert recorded is not None
+                integrity_warnings.append(
+                    {
+                        "code": "previous_hash_mismatch",
+                        "byte_offset": line_start,
+                        "line": recorded.get("line"),
+                        "event_id": _optional_text(event.get("event_id")),
+                        "recorded": True,
+                        "message": "continued across a breakpoint pinned by the sealed archive manifest",
+                    }
+                )
+            expected_previous = stored_hash
+            last_hash = stored_hash
+            last_id = _optional_text(event.get("event_id"))
+            if (
+                _matches_filter(event.get("source"), source_filter)
+                and _matches_filter(event.get("event_type"), type_filter)
+                and _matches_filter(event.get("project"), project_filter)
+            ):
+                selected.append(project_event(event, projection))
+                if limit is not None and len(selected) >= limit:
+                    stopped_early = offset < size
+                    break
+    next_cursor = LedgerCursor(
+        ledger_id=ledger_id,
+        byte_offset=offset,
+        last_event_id=last_id,
+        last_content_hash=last_hash,
+    )
+    if failed:
+        chain_status = "failed"
+    elif integrity_warnings:
+        chain_status = "partial"
+    elif cursor.byte_offset == 0 and offset == size:
+        chain_status = "verified"
+    else:
+        chain_status = "partial"
+    return EventBatch(
+        events=selected,
+        next_cursor=next_cursor,
+        chain_status=chain_status,
+        cursor_status="invalid" if failed else "ok",
+        truncated=stopped_early,
+        bytes_read=offset - cursor.byte_offset,
+        ledger_size=size,
+        warnings=warnings,
+        integrity_warnings=integrity_warnings,
+    )
+
+
+def _recorded_breakpoint_matches(
+    recorded: dict[str, Any] | None,
+    *,
+    event: dict[str, Any],
+    expected_previous: str | None,
+    stored_hash: str | None,
+) -> bool:
+    if recorded is None:
+        return False
+    return (
+        recorded.get("code") == "previous_hash_mismatch"
+        and recorded.get("event_id") == _optional_text(event.get("event_id"))
+        and recorded.get("expected_previous_hash") == expected_previous
+        and recorded.get("actual_previous_hash")
+        == _optional_text(event.get("previous_hash"))
+        and recorded.get("content_hash") == stored_hash
+    )
 
 
 def rotate_ledger(
@@ -728,33 +743,11 @@ def rotate_ledger(
     *,
     destination: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Archive one ledger and create a new identity at the original path."""
+    """Compatibility alias for the atomic sealed-archive transition."""
 
-    path = Path(ledger_path)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    archive = Path(destination) if destination else path.with_name(f"{path.stem}.{stamp}{path.suffix}")
-    if archive.exists() or ledger_state_path(archive).exists():
-        raise FileExistsError(f"Rotation destination already exists: {archive}")
-    with exclusive_file_lock(ledger_lock_path(path)):
-        old_state = _ensure_state_unlocked(path)
-        old_id = str(old_state["ledger_id"])
-        old_size = path.stat().st_size if path.exists() else 0
-        archive.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            os.replace(path, archive)
-        old_state_path = ledger_state_path(path)
-        if old_state_path.exists():
-            os.replace(old_state_path, ledger_state_path(archive))
-        new_state = _ensure_state_unlocked(path)
-        return {
-            "schema_version": "rawmem.rotation.v1",
-            "archived_ledger": str(archive),
-            "archived_ledger_id": old_id,
-            "archived_bytes": old_size,
-            "new_ledger": str(path),
-            "new_ledger_id": str(new_state["ledger_id"]),
-            "rotated_at": utc_now_iso(),
-        }
+    from .archive import seal_ledger
+
+    return seal_ledger(ledger_path, destination=destination)
 
 
 def init_local_store(cwd: str | Path | None = None) -> Path:
