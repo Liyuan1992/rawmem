@@ -27,6 +27,7 @@ class ConfigTests(unittest.TestCase):
             config = load_global_config(Path(tmp) / "missing.json")
             self.assertEqual(config["schema"], "rawmem.config.v2")
             self.assertFalse(config["daemon"]["tailers"]["clipboard"]["enabled"])
+            self.assertFalse(config["daemon"]["tailers"]["deepseek_harness"]["enabled"])
             self.assertTrue(config["daemon"]["serve"]["require_token"])
             self.assertIsNone(config["daemon"]["serve"]["token"])
 

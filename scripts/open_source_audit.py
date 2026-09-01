@@ -15,7 +15,7 @@ SECRET_PATTERNS = [
 
 PRIVATE_PATH_PATTERNS = [
     re.compile(r"C:\\Users\\Administrator", re.IGNORECASE),
-    re.compile(r"D:\\Dev\\Projects", re.IGNORECASE),
+    re.compile(r"D:[\\/]Dev[\\/]Projects", re.IGNORECASE),
     re.compile(r"E:\\", re.IGNORECASE),
 ]
 

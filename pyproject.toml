@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rawmem"
-version = "0.6.2"
+version = "0.7.0"
 description = "A tiny local-first raw evidence ledger for AI and human workflows."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,6 +21,11 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+deepseek-harness = ["zstandard>=0.23"]
+mcp = ["mcp>=1.2"]
+all = ["mcp>=1.2", "zstandard>=0.23"]
+
 [project.urls]
 Homepage = "https://github.com/Liyuan1992/rawmem"
 Repository = "https://github.com/Liyuan1992/rawmem"
@@ -28,6 +33,23 @@ Issues = "https://github.com/Liyuan1992/rawmem/issues"
 
 [project.scripts]
 rawmem = "rawmem.cli:main"
+rawmem-mcp = "rawmem.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.data-files]
+"share/doc/rawmem" = [
+  "PRIVACY.md",
+  "README.md",
+  "SECURITY.md",
+  "docs/ARCHITECTURE.md",
+  "docs/DEEPSEEK_HARNESS.md",
+  "docs/LEDGER_PROTOCOL.md",
+  "docs/RELEASE_CHECKLIST.md",
+  "docs/SETUP.md",
+]
+"share/doc/rawmem/examples/deepseek-harness" = [
+  "examples/deepseek-harness/rawmem.cordis.yml",
+]
+"share/doc/rawmem/releases" = ["docs/releases/0.7.0.md"]

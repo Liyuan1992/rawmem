@@ -26,7 +26,7 @@ def claude_line(kind: str, text, *, sidechain: bool = False, meta: bool = False)
             "isSidechain": sidechain,
             "isMeta": meta,
             "message": {"role": kind, "content": text},
-            "cwd": "D:\\Dev\\Projects\\demo",
+            "cwd": "C:\\Fictional\\Projects\\demo",
             "sessionId": "sess-1",
             "uuid": "uuid-1",
             "timestamp": "2026-07-09T00:00:00.000Z",
@@ -114,7 +114,10 @@ class CodexTailerTests(unittest.TestCase):
                     {
                         "timestamp": "t0",
                         "type": "session_meta",
-                        "payload": {"id": "sess-9", "cwd": "D:\\Dev\\Projects\\nexus"},
+                        "payload": {
+                            "id": "sess-9",
+                            "cwd": "C:\\Fictional\\Projects\\nexus",
+                        },
                     }
                 ),
                 json.dumps(
@@ -164,7 +167,10 @@ class CodexTailerTests(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "session_meta",
-                        "payload": {"id": "sess-2", "cwd": "D:\\Dev\\Projects\\alpha"},
+                        "payload": {
+                            "id": "sess-2",
+                            "cwd": "C:\\Fictional\\Projects\\alpha",
+                        },
                     }
                 )
                 + "\n",

@@ -35,7 +35,14 @@ cd rawmem
 python -m pip install --user -e .
 ```
 
-The runtime has no third-party dependencies. Make sure the user Scripts
+The core runtime has no third-party dependencies. DeepSeek Harness compressed
+session capture and the MCP server are optional extras:
+
+```powershell
+python -m pip install --user -e ".[deepseek-harness,mcp]"
+```
+
+Make sure the user Scripts
 directory (e.g. `%APPDATA%\Python\Python312\Scripts`) is on PATH so `rawmem`
 works from any directory.
 
@@ -50,8 +57,8 @@ rawmem config --show-browser-token    # paste into the browser extension options
 rawmem doctor                         # verify the complete installation
 ```
 
-After this the daemon passively tails Claude Code sessions, Codex sessions,
-PowerShell history, watches configured directories, and serves the
+After this the daemon passively tails Claude Code, Codex, and Cursor sessions,
+tails PowerShell history, watches configured directories, and serves the
 browser-capture endpoint — with zero per-event action from you. Clipboard
 polling is available but disabled by default; enable it explicitly in config
 or with `rawmem config --include-clipboard`.
@@ -61,6 +68,9 @@ report back.
 
 See [docs/SETUP.md](docs/SETUP.md) for the full setup matrix and the
 browser extension.
+
+For DeepSeek Harness capture plus bounded read-only MCP access, see
+[docs/DEEPSEEK_HARNESS.md](docs/DEEPSEEK_HARNESS.md).
 
 ## Commands
 
@@ -131,6 +141,7 @@ rawmem git-snapshot
 | Claude Code sessions | daemon tailer (zero friction) | user/assistant turns, project, session, branch |
 | Codex sessions | daemon tailer (zero friction) | user/assistant turns, project, session |
 | Cursor agent transcripts | daemon tailer (zero friction) | user/assistant turns, workspace, session |
+| DeepSeek Harness sessions | opt-in daemon tailer (zero friction after setup) | direct user/model turns; tool name/id/status metadata only |
 | Shell commands | daemon tailer of PSReadLine history | every completed command line |
 | Clipboard | daemon poller (deduped, opt-in) | clipboard text changes |
 | Git lifecycle, all repos | `setup --global --yes` core.hooksPath hooks | commit/checkout/merge/rewrite/push snapshots |
@@ -176,7 +187,7 @@ Each line is JSON:
   "source": "codex",
   "event_type": "task_note",
   "project": "rawmem",
-  "cwd": "D:/Dev/Projects/rawmem",
+  "cwd": "/workspace/fictional-rawmem",
   "summary": "User asked for a local-first raw evidence ledger.",
   "raw_text": "User asked for a local-first raw evidence ledger.",
   "tags": [],
@@ -208,6 +219,10 @@ piece is the ledger. Capture adapters can be small and optional:
 - Manual hotkey/clipboard capture as a low-friction fallback.
 
 All adapters should emit the same event schema.
+
+MCP is a query adapter, not a promotion path. `rawmem-mcp` exposes only
+path-free status, bounded recent events, and archive metadata. Summary access
+is the default; raw bodies require an explicit `read:full` scope.
 
 ## Privacy Principles
 

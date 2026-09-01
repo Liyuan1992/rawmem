@@ -47,6 +47,7 @@ use `rawmem doctor --strict` when every optional integration is expected.
 | Claude Code sessions | daemon tailer | Zero | user/assistant turns with project, session, branch |
 | Codex sessions | daemon tailer | Zero | user/assistant turns with project, session |
 | Cursor agent transcripts | daemon tailer | Zero | user/assistant turns with workspace and session |
+| DeepSeek Harness sessions | opt-in daemon tailer | Zero after setup | direct user/model turns; bounded tool metadata |
 | PowerShell commands | daemon tailer (PSReadLine history) | Zero | every completed command line |
 | Clipboard | daemon poller | Zero after opt-in | deduped clipboard text changes |
 | Git lifecycle, all repos | `setup --global` (core.hooksPath) | One-time | commit/checkout/merge/rewrite/push snapshots |
@@ -74,6 +75,13 @@ Notable knobs:
   your own turns.
 - `daemon.tailers.cursor.root`: override Cursor's default
   `~/.cursor/projects` transcript root.
+- `daemon.tailers.deepseek_harness.root`: override DeepSeek Harness's default
+  `$DSH_HOME/sessions` (or `~/.dsh/sessions`). Compressed session files require
+  `pip install "rawmem[deepseek-harness]"`. This new capture surface is
+  disabled by default; set `enabled` to `true` after reviewing its boundary.
+- `daemon.tailers.deepseek_harness.include_tool_metadata`: records tool name,
+  call id, and success/error only. Tool arguments and result bodies are never
+  copied by this tailer.
 - `daemon.tailers.clipboard.enabled`: disabled by default; set `true` or run
   `rawmem config --include-clipboard` to enable it. Run
   `rawmem config --disable-clipboard` to turn it off without changing global
@@ -135,6 +143,9 @@ strict CSP and CORS on many sites; the extension is the reliable path.
 browser history scraper. The broad capture surfaces are opt-in and local:
 
 - tailers read logs your tools already write on this machine;
+- the DeepSeek Harness tailer ignores plugin/goal-injected user messages and
+  model reasoning blocks; it records direct user/model text and bounded tool
+  metadata only;
 - the shell tailer records completed command lines, not keystrokes;
 - Git hooks record repository state, not private browser/app data;
 - the file watcher records paths and metadata, not file contents;

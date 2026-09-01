@@ -1,0 +1,13 @@
+- insert:
+    - id: memory-rawmem
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: rawmem
+        transport: stdio
+        command: rawmem-mcp
+        args:
+          - '--scopes'
+          - 'read:summary'
+        env: {}
+        cwd: !!js process.cwd()
+        failOnStartupError: true

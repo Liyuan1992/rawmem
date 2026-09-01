@@ -7,6 +7,7 @@ Use this before publishing `rawmem` publicly.
 ```powershell
 $env:PYTHONPATH = "src"
 python -m compileall -q src tests scripts
+python -m pip install -e ".[all]"
 python -m unittest discover -s tests
 python scripts/open_source_audit.py
 python scripts/smoke_daemon.py
@@ -14,6 +15,7 @@ rawmem seal --help
 rawmem archives --help
 python scripts/benchmark_ledger.py --events 1000000 --samples 30 --verify
 rawmem --version
+rawmem-mcp --help
 rawmem setup --global --install-startup --dry-run
 rawmem uninstall --dry-run
 ```
@@ -40,6 +42,11 @@ rawmem uninstall --dry-run
   scripting, storage, and localhost host permissions.
 - Cursor, Codex, and Claude Code fictional parity fixtures produce the same
   event roles and provenance fields.
+- DeepSeek Harness tests use synthetic JSONL/Zstandard frames only; direct
+  turns are captured while injected messages, reasoning, tool arguments, and
+  tool result bodies are excluded.
+- `rawmem-mcp` has no write tool, defaults to `read:summary`, bounds results,
+  and does not disclose the ledger path.
 - `verify` creates or modifies no lock/state sidecar.
 - A temporary-ledger seal preserves the archive SHA-256 byte-for-byte, creates
   a valid transition chain, and rejects append to the archive.

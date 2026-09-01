@@ -22,7 +22,7 @@ tailing its transcript is neither. So the priority order is:
 
 1. Capture adapters
    - Passive tailers: Claude Code transcripts, Codex session rollouts,
-     Cursor agent transcripts,
+     Cursor and DeepSeek Harness agent transcripts,
      PSReadLine shell history (all run inside `rawmem daemon`)
    - Clipboard poller (off by default, opt-in, deduped, baselined at daemon start)
    - Global and repo-local Git hooks and snapshots
@@ -46,6 +46,11 @@ tailing its transcript is neither. So the priority order is:
    - MemoryDSL conversion
    - Bug-pattern mining
    - User preference and project-rule candidates
+
+4. Read-only interoperability
+   - `rawmem-mcp` exposes bounded status/recent/archive tools over stdio
+   - Summary projection is the default; `read:full` is an explicit disclosure
+   - Query access never approves, summarizes into authority, or promotes events
 
 ## Non-Goals For The Core
 

@@ -132,6 +132,14 @@ def default_global_config() -> dict[str, Any]:
                     "max_chars": 6000,
                     "root": None,
                 },
+                "deepseek_harness": {
+                    "enabled": False,
+                    "interval_seconds": 20,
+                    "include_assistant": True,
+                    "include_tool_metadata": True,
+                    "max_chars": 6000,
+                    "root": None,
+                },
                 "powershell_history": {
                     "enabled": True,
                     "interval_seconds": 15,

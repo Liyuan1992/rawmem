@@ -34,6 +34,10 @@ Sensitive areas include:
   with `--remove-home --yes`.
 - Clipboard polling is disabled by default.
 - Raw captured events remain review-required; they are not accepted memory.
+- DeepSeek Harness tool arguments, tool result bodies, injected messages, and
+  model reasoning are excluded from passive session capture.
+- `rawmem-mcp` is read-only, path-free, bounded, and requires an explicit
+  `read:full` scope before returning raw event bodies.
 
 ## Maintainer Checklist
 

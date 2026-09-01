@@ -372,6 +372,254 @@ class CursorTailer(FileTailer):
         )
 
 
+class DeepSeekHarnessTailer(FileTailer):
+    """Tail DeepSeek Harness JSONL session persistence.
+
+    Harness stores logical JSONL either directly or as concatenated,
+    independently checksummed Zstandard frames.  Compressed support is an
+    optional dependency so rawmem's core remains dependency-free.
+    """
+
+    name = "deepseek-harness"
+
+    def __init__(
+        self,
+        *,
+        root: str | Path | None = None,
+        include_assistant: bool = True,
+        include_tool_metadata: bool = True,
+        max_chars: int = 6000,
+        backfill: bool = False,
+    ) -> None:
+        super().__init__(backfill=backfill)
+        if root:
+            self.root = Path(root).expanduser()
+        else:
+            dsh_home = os.environ.get("DSH_HOME")
+            home = Path(dsh_home).expanduser() if dsh_home else Path.home() / ".dsh"
+            self.root = home / "sessions"
+        self.include_assistant = include_assistant
+        self.include_tool_metadata = include_tool_metadata
+        self.max_chars = max_chars
+
+    def discover(self) -> Iterable[Path]:
+        if not self.root.is_dir():
+            return []
+        return sorted(
+            path
+            for path in self.root.rglob("session.jsonl*")
+            if path.is_file()
+            and path.name in {"session.jsonl", "session.jsonl.zstd"}
+        )
+
+    def register_file(self, path: Path, entry: dict[str, Any]) -> None:
+        first = self._read_lines(path, 0, first_line_only=True)
+        if first:
+            self._update_session_meta(first[0], entry)
+
+    def poll(self, state: TailState) -> list[dict[str, Any]]:
+        tstate = state.tailer(self.name)
+        first_run = not tstate["initialized"]
+        files: dict[str, Any] = tstate["files"]
+        events: list[dict[str, Any]] = []
+        for path in self.discover():
+            key = str(path)
+            entry = files.get(key)
+            if entry is None:
+                entry = {"offset": 0, "meta": {}}
+                files[key] = entry
+                self.register_file(path, entry)
+                if first_run and not self.backfill:
+                    try:
+                        entry["offset"] = path.stat().st_size
+                    except OSError:
+                        pass
+                    continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            offset = int(entry.get("offset", 0))
+            if size < offset:
+                offset = 0
+            if size == offset:
+                continue
+            lines = self._read_lines(path, offset)
+            if lines is None:
+                # A missing decoder or an incomplete final frame is retryable.
+                continue
+            parsed: list[dict[str, Any]] = []
+            try:
+                for line in lines:
+                    event = self.parse_line(line, entry, path)
+                    if event is not None:
+                        parsed.append(event)
+            except (ValueError, KeyError, TypeError):
+                # Do not advance the compressed-frame boundary on malformed
+                # input; the writer may not have completed the final frame.
+                continue
+            events.extend(parsed)
+            entry["offset"] = size
+            entry["meta"].pop("decoder_error", None)
+        tstate["initialized"] = True
+        return events
+
+    def _read_lines(
+        self,
+        path: Path,
+        offset: int,
+        *,
+        first_line_only: bool = False,
+    ) -> list[str] | None:
+        if path.suffix != ".zstd":
+            try:
+                with path.open("rb") as handle:
+                    handle.seek(offset)
+                    raw = handle.readline() if first_line_only else handle.read()
+            except OSError:
+                return None
+            if not raw:
+                return []
+            if not first_line_only and not raw.endswith(b"\n"):
+                return None
+            text = raw.decode("utf-8", errors="strict")
+            return [line for line in text.splitlines() if line.strip()]
+
+        try:
+            import zstandard  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError(
+                "DeepSeek Harness compressed sessions require the optional "
+                "dependency: pip install rawmem[deepseek-harness]"
+            ) from exc
+        try:
+            with path.open("rb") as handle:
+                handle.seek(offset)
+                with zstandard.ZstdDecompressor().stream_reader(
+                    handle,
+                    read_across_frames=not first_line_only,
+                ) as reader:
+                    raw = reader.readline() if first_line_only else reader.read()
+        except (OSError, zstandard.ZstdError):
+            return None
+        if not raw:
+            return []
+        if not first_line_only and not raw.endswith(b"\n"):
+            return None
+        try:
+            text = raw.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return None
+        return [line for line in text.splitlines() if line.strip()]
+
+    @staticmethod
+    def _update_session_meta(line: str, entry: dict[str, Any]) -> bool:
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(item, dict) or item.get("type") != "session":
+            return False
+        data = item.get("data") if isinstance(item.get("data"), dict) else item
+        entry["meta"]["cwd"] = data.get("cwd")
+        entry["meta"]["session_id"] = data.get("id") or data.get("sessionId")
+        entry["meta"]["agent_preset"] = data.get("agentPreset")
+        return True
+
+    def parse_line(
+        self,
+        line: str,
+        entry: dict[str, Any],
+        path: Path,
+    ) -> dict[str, Any] | None:
+        item = json.loads(line)
+        if not isinstance(item, dict):
+            return None
+        if self._update_session_meta(line, entry):
+            return None
+        kind = item.get("type")
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        role: str | None = None
+        text = ""
+        payload: dict[str, Any] = {}
+
+        if kind == "user/message":
+            source = data.get("source") if isinstance(data.get("source"), dict) else {}
+            if source.get("kind") != "user":
+                return None
+            role = "user"
+            text = _extract_text_blocks(data.get("content"))
+            payload["message_id"] = data.get("id")
+        elif kind == "assistant/message":
+            if not self.include_assistant:
+                return None
+            message = (
+                data.get("message") if isinstance(data.get("message"), dict) else {}
+            )
+            source = (
+                message.get("source")
+                if isinstance(message.get("source"), dict)
+                else {}
+            )
+            if source.get("kind") != "model":
+                return None
+            role = "assistant"
+            text = _extract_text_blocks(message.get("content"))
+            payload["turn"] = data.get("turn")
+            payload["step"] = data.get("step")
+        elif kind == "tool/call" and self.include_tool_metadata:
+            name = str(data.get("name") or "unknown")
+            text = f"Tool call: {name}"
+            role = "tool_call"
+            payload.update({"tool_name": name, "call_id": data.get("callId")})
+        elif kind == "tool/result" and self.include_tool_metadata:
+            message = (
+                data.get("message") if isinstance(data.get("message"), dict) else {}
+            )
+            blocks = (
+                message.get("content")
+                if isinstance(message.get("content"), list)
+                else []
+            )
+            block = blocks[0] if blocks and isinstance(blocks[0], dict) else {}
+            is_error = bool(block.get("isError"))
+            text = "Tool result: error" if is_error else "Tool result: success"
+            role = "tool_result"
+            payload.update({"call_id": block.get("toolCallId"), "is_error": is_error})
+        else:
+            return None
+
+        if not text.strip():
+            return None
+        truncated = len(text) > self.max_chars
+        text = text[: self.max_chars]
+        cwd = entry["meta"].get("cwd")
+        project = Path(cwd).name if cwd else "unknown"
+        payload.update(
+            {
+                "session_id": entry["meta"].get("session_id") or path.parent.name,
+                "agent_preset": entry["meta"].get("agent_preset"),
+                "orig_ts": item.get("timestamp") or data.get("timestamp"),
+                "transcript": str(path),
+                "truncated": truncated,
+            }
+        )
+        return build_event(
+            source="deepseek-harness",
+            event_type=(
+                f"agent_{role}_turn"
+                if role in {"user", "assistant"}
+                else f"agent_{role}"
+            ),
+            project=project,
+            cwd=cwd or Path.home(),
+            summary=summarize(text),
+            raw_text=text,
+            tags=["agent", "deepseek-harness"],
+            payload=payload,
+        )
+
+
 class PowerShellHistoryTailer(FileTailer):
     """Tail the PSReadLine history file; covers every shell with no profile edit."""
 
@@ -502,6 +750,19 @@ def build_tailers_from_config(
                 root=cursor_cfg.get("root"),
                 include_assistant=cursor_cfg.get("include_assistant", True),
                 max_chars=int(cursor_cfg.get("max_chars", 6000)),
+                backfill=backfill,
+            )
+        )
+    deepseek_cfg = tailer_config.get("deepseek_harness") or {}
+    if deepseek_cfg.get("enabled", False):
+        tailers.append(
+            DeepSeekHarnessTailer(
+                root=deepseek_cfg.get("root"),
+                include_assistant=deepseek_cfg.get("include_assistant", True),
+                include_tool_metadata=deepseek_cfg.get(
+                    "include_tool_metadata", True
+                ),
+                max_chars=int(deepseek_cfg.get("max_chars", 6000)),
                 backfill=backfill,
             )
         )

@@ -22,7 +22,7 @@ from .ledger import (
 )
 from .privacy import CaptureDecision, CapturePolicy
 
-__version__ = "0.6.2"
+__version__ = "0.7.0"
 
 __all__ = [
     "SCHEMA",
