@@ -26,13 +26,13 @@ SCENES = [
             "Official Harness MCP bridge / stdio",
             "Synthetic fixture - no private ledger data",
         ],
-        3500,
+        1400,
         BLUE,
     ),
     (
         "Harness version used",
         ["$ dsh --version", "0.1.1-rc.2"],
-        4000,
+        1200,
         BLUE,
     ),
     (
@@ -43,7 +43,7 @@ SCENES = [
             "  rawmem-0.7.0-py3-none-any.whl\"",
             "Successfully installed rawmem-0.7.0",
         ],
-        5500,
+        2000,
         GREEN,
     ),
     (
@@ -56,7 +56,7 @@ SCENES = [
             "  command: rawmem-mcp",
             "  scopes: read:summary",
         ],
-        6000,
+        2200,
         BLUE,
     ),
     (
@@ -69,7 +69,7 @@ SCENES = [
             "recent: The fictional retry test passed after the fix.",
             "raw_text_exposed: false",
         ],
-        8500,
+        2800,
         GREEN,
     ),
     (
@@ -80,7 +80,7 @@ SCENES = [
             "rawmem is evidence - not approved long-term memory",
             "github.com/Liyuan1992/rawmem",
         ],
-        6000,
+        2200,
         ORANGE,
     ),
 ]

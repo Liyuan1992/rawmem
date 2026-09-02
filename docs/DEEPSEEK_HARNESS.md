@@ -106,7 +106,7 @@ python .\examples\deepseek-harness\demo.py
 
 The script creates a disposable ledger, verifies its hash chain, reads the
 summary projection, and confirms that full text fails closed under the default
-scope. To re-render the 33.5-second GIF, install Pillow and run
+scope. To re-render the 11.8-second GIF, install Pillow and run
 `python .\examples\deepseek-harness\render_demo_gif.py`.
 
 ![rawmem DeepSeek Harness demo](assets/deepseek-harness-demo.gif)
