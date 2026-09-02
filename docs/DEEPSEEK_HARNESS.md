@@ -10,7 +10,7 @@ Neither path turns evidence into reviewed or approved memory.
 ## Install the optional capabilities
 
 ```powershell
-python -m pip install "rawmem[deepseek-harness,mcp]"
+python -m pip install "rawmem[deepseek-harness,mcp] @ https://github.com/Liyuan1992/rawmem/releases/download/v0.7.0/rawmem-0.7.0-py3-none-any.whl"
 ```
 
 The `deepseek-harness` extra supplies the Zstandard decoder used by Harness's
@@ -94,6 +94,22 @@ Harness currently bridges MCP tools only, so this server intentionally does
 not depend on MCP resources or prompts. To keep the overlay, merge its `insert`
 entry into the relevant Harness user patch; do not overwrite unrelated patch
 entries.
+
+## Reproduce the synthetic demo
+
+The published GIF contains only fictional evidence. Run the same real MCP
+stdio calls from a checkout with:
+
+```powershell
+python .\examples\deepseek-harness\demo.py
+```
+
+The script creates a disposable ledger, verifies its hash chain, reads the
+summary projection, and confirms that full text fails closed under the default
+scope. To re-render the 33.5-second GIF, install Pillow and run
+`python .\examples\deepseek-harness\render_demo_gif.py`.
+
+![rawmem DeepSeek Harness demo](assets/deepseek-harness-demo.gif)
 
 ## Boundary
 
