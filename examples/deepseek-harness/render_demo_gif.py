@@ -87,10 +87,10 @@ SCENES = [
 
 
 def _font(size: int, *, bold: bool = False):
-    windows = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
     names = ["CascadiaMono.ttf", "consolab.ttf" if bold else "consola.ttf", "DejaVuSansMono.ttf"]
     for name in names:
-        candidate = windows / name
+        windows = os.environ.get("WINDIR")
+        candidate = Path(windows) / "Fonts" / name if windows else Path(name)
         try:
             return ImageFont.truetype(str(candidate if candidate.exists() else name), size)
         except OSError:
