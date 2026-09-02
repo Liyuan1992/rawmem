@@ -1,6 +1,6 @@
 # rawmem Ledger Protocol
 
-Protocol baseline: rawmem 0.6.2 (unchanged in rawmem 0.7.0)
+Protocol baseline: rawmem 0.6.2 (unchanged in rawmem 0.7.0 and 0.7.1)
 
 The JSONL event schema remains `rawmem.event.v1`. Version 0.6.2 adds a sealed
 archive lifecycle without rewriting historical event bytes. The active ledger

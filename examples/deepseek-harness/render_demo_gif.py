@@ -39,9 +39,9 @@ SCENES = [
         "Install the released wheel",
         [
             "$ pip install \"rawmem[deepseek-harness,mcp] @",
-            "  github.com/Liyuan1992/rawmem/releases/download/v0.7.0/",
-            "  rawmem-0.7.0-py3-none-any.whl\"",
-            "Successfully installed rawmem-0.7.0",
+            "  github.com/Liyuan1992/rawmem/releases/download/v0.7.1/",
+            "  rawmem-0.7.1-py3-none-any.whl\"",
+            "Successfully installed rawmem-0.7.1",
         ],
         2000,
         GREEN,

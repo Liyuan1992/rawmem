@@ -1,0 +1,9 @@
+[project]
+name = "rawmem-mcpb"
+version = "0.7.1"
+requires-python = ">=3.10"
+dependencies = [
+  "mcp>=1.2",
+  "rawmem @ https://github.com/Liyuan1992/rawmem/releases/download/v0.7.1/rawmem-0.7.1-py3-none-any.whl",
+]
+

@@ -1,5 +1,7 @@
 # rawmem
 
+<!-- mcp-name: io.github.Liyuan1992/rawmem -->
+
 `rawmem` is a tiny local-first evidence ledger for AI and human workflows.
 
 The idea is deliberately small:
@@ -42,10 +44,10 @@ session capture and the MCP server are optional extras:
 python -m pip install --user -e ".[deepseek-harness,mcp]"
 ```
 
-To install the published `v0.7.0` wheel without cloning the repository:
+To install the published `v0.7.1` wheel without cloning the repository:
 
 ```powershell
-python -m pip install "rawmem[deepseek-harness,mcp] @ https://github.com/Liyuan1992/rawmem/releases/download/v0.7.0/rawmem-0.7.0-py3-none-any.whl"
+python -m pip install "rawmem[deepseek-harness,mcp] @ https://github.com/Liyuan1992/rawmem/releases/download/v0.7.1/rawmem-0.7.1-py3-none-any.whl"
 ```
 
 Make sure the user Scripts

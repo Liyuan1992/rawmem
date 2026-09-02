@@ -10,7 +10,7 @@ Neither path turns evidence into reviewed or approved memory.
 ## Install the optional capabilities
 
 ```powershell
-python -m pip install "rawmem[deepseek-harness,mcp] @ https://github.com/Liyuan1992/rawmem/releases/download/v0.7.0/rawmem-0.7.0-py3-none-any.whl"
+python -m pip install "rawmem[deepseek-harness,mcp] @ https://github.com/Liyuan1992/rawmem/releases/download/v0.7.1/rawmem-0.7.1-py3-none-any.whl"
 ```
 
 The `deepseek-harness` extra supplies the Zstandard decoder used by Harness's

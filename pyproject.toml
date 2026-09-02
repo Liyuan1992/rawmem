@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rawmem"
-version = "0.7.0"
+version = "0.7.1"
 description = "A tiny local-first raw evidence ledger for AI and human workflows."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -52,4 +52,4 @@ where = ["src"]
 "share/doc/rawmem/examples/deepseek-harness" = [
   "examples/deepseek-harness/rawmem.cordis.yml",
 ]
-"share/doc/rawmem/releases" = ["docs/releases/0.7.0.md"]
+"share/doc/rawmem/releases" = ["docs/releases/0.7.0.md", "docs/releases/0.7.1.md"]

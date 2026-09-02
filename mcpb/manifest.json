@@ -1,0 +1,56 @@
+{
+  "manifest_version": "0.4",
+  "name": "rawmem",
+  "display_name": "rawmem",
+  "version": "0.7.1",
+  "description": "Bounded read-only access to a local, append-only evidence ledger.",
+  "long_description": "rawmem preserves local evidence before interpretation. Its MCP server exposes bounded status, recent-event summaries, and archive metadata without write tools or automatic promotion into long-term memory.",
+  "author": {
+    "name": "Liyuan",
+    "url": "https://github.com/Liyuan1992"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Liyuan1992/rawmem.git"
+  },
+  "homepage": "https://github.com/Liyuan1992/rawmem",
+  "documentation": "https://github.com/Liyuan1992/rawmem#readme",
+  "support": "https://github.com/Liyuan1992/rawmem/issues",
+  "server": {
+    "type": "uv",
+    "entry_point": "src/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "src/server.py",
+        "--ledger",
+        "${user_config.ledger_file}",
+        "--scopes",
+        "read:summary"
+      ]
+    }
+  },
+  "tools": [
+    {"name": "rawmem_status", "description": "Read bounded ledger status and verification metadata."},
+    {"name": "rawmem_recent", "description": "Read bounded summaries of recent evidence events."},
+    {"name": "rawmem_archives", "description": "List bounded metadata for sealed archives."}
+  ],
+  "keywords": ["agent", "memory", "evidence", "mcp", "local-first"],
+  "license": "MIT",
+  "user_config": {
+    "ledger_file": {
+      "type": "file",
+      "title": "rawmem ledger",
+      "description": "Choose the local append-only rawmem events.jsonl ledger.",
+      "default": "${HOME}/.rawmem/events.jsonl",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {"python": ">=3.10.0 <4"}
+  }
+}
